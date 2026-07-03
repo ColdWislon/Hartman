@@ -1,0 +1,10 @@
+# Shared mailmap applied to every mirror during git log (--use-mailmap).
+#
+# Populate this file once with `ingest seed-mailmap`, which dumps every
+# distinct "Name <email>" seen across all mirrors here. A human then dedupes
+# identities by rewriting lines in canonical form, e.g.:
+#
+#   Canonical Name <canonical@example.com> <old-alias@example.com>
+#   Canonical Name <canonical@example.com> Old Name <old@example.com>
+#
+# Blank / comment lines are ignored by git.

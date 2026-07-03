@@ -1,0 +1,69 @@
+# Orchestrates the full stack: db, api, web, and a one-shot ingest service.
+#
+#   docker compose up -d db api web         # stand up the stack
+#   docker compose run --rm ingest ingest-all --seed-sample   # offline demo data
+#   docker compose run --rm ingest ingest-all                 # real ingestion
+#
+# Credentials come from the environment / .env (never the config file):
+#   TULEAP_ACCESS_KEY, GIT_HTTP_PAT
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: monitor
+      POSTGRES_PASSWORD: monitor
+      POSTGRES_DB: monitor
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Apply the schema on first boot of a fresh volume.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitor -d monitor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://monitor:monitor@db:5432/monitor
+      TULEAP_BASE_URL: ${TULEAP_BASE_URL:-https://tuleap.example.com}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+  # One-shot ingestion runner (not started by `up`; invoke with `run`).
+  ingest:
+    build:
+      context: .
+      dockerfile: ingest/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://monitor:monitor@db:5432/monitor
+      TULEAP_ACCESS_KEY: ${TULEAP_ACCESS_KEY:-}
+      GIT_HTTP_PAT: ${GIT_HTTP_PAT:-}
+      MIRRORS_DIR: /data/mirrors
+    volumes:
+      - mirrors:/data/mirrors
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["tools"]   # excluded from `docker compose up`
+
+volumes:
+  pgdata:
+  mirrors:

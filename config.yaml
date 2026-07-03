@@ -1,0 +1,21 @@
+tuleap_base_url: https://tuleap.example.com
+timezone: Europe/Paris          # all bucketing done in this tz
+week: iso                        # ISO-8601 weeks (Mon start)
+mailmap_path: ./.mailmap         # single shared mailmap, applied to every repo
+
+repos:
+  - name: uart
+    clone_url: https://tuleap.example.com/plugins/git/myproj/uart.git
+    # default_branch is auto-detected from the remote HEAD; do not hardcode
+  - name: firmware
+    clone_url: https://tuleap.example.com/plugins/git/myproj/firmware.git
+
+trackers:
+  - 101                          # Tuleap tracker IDs to monitor (fully configurable)
+  - 149
+
+churn_exclude:                   # optional per-repo globs excluded from CHURN only
+  uart:                          #   (files still count toward "files touched")
+    - "**/*.lock"
+    - "vendor/**"
+  firmware: []
