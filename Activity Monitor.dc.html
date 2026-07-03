@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    [data-theme="dark"]{--bg:#0b0c0e;--surface:#111214;--panel:#17181b;--panel2:#1e2024;--hover:rgba(255,255,255,0.045);--border:rgba(255,255,255,0.09);--border2:rgba(255,255,255,0.15);--text:#e9eaed;--muted:#8b8e97;--faint:#5d606a;--accent:#5b8cff;--accent2:#7aa2ff;--accentweak:rgba(91,140,255,0.16);--green:#43b95e;--greenweak:rgba(67,185,94,0.16);--red:#f0603f;--redweak:rgba(240,96,63,0.15);--grid:rgba(255,255,255,0.07);--track:rgba(255,255,255,0.06);--shadow:0 1px 2px rgba(0,0,0,0.4),0 10px 30px rgba(0,0,0,0.28)}
+    [data-theme="light"]{--bg:#f4f5f7;--surface:#ffffff;--panel:#ffffff;--panel2:#f4f5f7;--hover:rgba(0,0,0,0.03);--border:rgba(0,0,0,0.09);--border2:rgba(0,0,0,0.16);--text:#15171c;--muted:#5f636e;--faint:#9599a3;--accent:#3b6ef5;--accent2:#2f5fe0;--accentweak:rgba(59,110,245,0.10);--green:#1f8a43;--greenweak:rgba(31,138,67,0.12);--red:#d0402f;--redweak:rgba(208,64,47,0.12);--grid:rgba(0,0,0,0.07);--track:rgba(0,0,0,0.05);--shadow:0 1px 2px rgba(0,0,0,0.05),0 10px 26px rgba(0,0,0,0.08)}
+    @keyframes dcfade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+    @keyframes dcdraw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+    ::selection{background:var(--accentweak)}
+    ::-webkit-scrollbar{height:10px;width:10px}
+    ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:6px}
+    ::-webkit-scrollbar-track{background:transparent}
+  </style>
+</helmet>
+<div data-theme="{{ theme }}" style="min-height:100vh;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:0.1px">{{ app }}</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;100%&quot;,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  state = {
+    theme: 'dark', page: 'git', metric: 'commits', bucket: 'month',
+    vw: 1360, drill: [], repos: null, from: null, to: null,
+    trackers: ['bugs','tasks','stories'], drawer: null,
+    repoOpen: false, trkOpen: false, tooltip: null,
+    groupBy: 'repo', zoneEditOpen: false,
+    zones: [
+      {name:'IP', dirs:['ip']},
+      {name:'Blocks', dirs:['block']},
+      {name:'Verification', dirs:['verif','tests','tb','uvm']},
+      {name:'Software', dirs:['src','drivers','rtos','hal','app']},
+      {name:'Infra', dirs:['constraints','ld','arch','migrations','cmd','internal','pkg']},
+      {name:'Docs', dirs:['docs','content','themes']}
+    ]
+  };
+
+  // ---------- lifecycle ----------
+  componentDidMount(){
+    const measure = () => this.setState({ vw: window.innerWidth });
+    measure();
+    this._onResize = measure;
+    window.addEventListener('resize', this._onResize);
+    if (this.state.repos === null) {
+      this.setState({
+        repos: this.REPOS.map(r=>r.name),
+        from: this.ALLMONTHS[0].key,
+        to: this.ALLMONTHS[this.ALLMONTHS.length-1].key
+      });
+    }
+    document.addEventListener('click', this._closePop = (e)=>{
+      if(!e.target.closest || !e.target.closest('[data-pop]')) this.setState({repoOpen:false, trkOpen:false, zoneEditOpen:false});
+    });
+  }
+  componentWillUnmount(){ window.removeEventListener('resize', this._onResize); document.removeEventListener('click', this._closePop); }
+
+  // ---------- prng / hash ----------
+  hash(str){ let h=2166136261; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619);} return h>>>0; }
+  rng(seed){ let t = seed>>>0; return ()=>{ t=(t+0x6D2B79F5)|0; let x=Math.imul(t^(t>>>15),1|t); x=(x+Math.imul(x^(x>>>7),61|x))^x; return ((x^(x>>>14))>>>0)/4294967296; }; }
+
+  // ---------- static config ----------
+  get REPOS(){ return [
+    {name:'uart', default_branch:'main'},
+    {name:'firmware', default_branch:'main'},
+    {name:'bootloader', default_branch:'master'},
+    {name:'web-console', default_branch:'main'},
+    {name:'telemetry-service', default_branch:'main'},
+    {name:'docs-portal', default_branch:'main'}
+  ]; }
+  get PALETTE(){ return ['#5b8cff','#12b3a6','#e0a34e','#b07cf0','#ec6f9e','#4cc0e0']; }
+  get AUTHORS(){ return [['Priya Nadkarni',1.0],['Marek Kowalski',0.83],['Diego Fuentes',0.72],['Lena Fischer',0.6],['Sam Okafor',0.49],['Yuki Tanaka',0.4],['Tom Byrne',0.31],['Aisha Rahman',0.22]]; }
+  get TRACKERS(){ return [
+    {id:'bugs', tuleap_tracker_id:101, name:'Bugs', w:0.46, statuses:['New','Confirmed','In Progress','Fixed','Closed']},
+    {id:'tasks', tuleap_tracker_id:102, name:'Tasks', w:0.31, statuses:['Todo','Doing','Review','Done']},
+    {id:'stories', tuleap_tracker_id:103, name:'User Stories', w:0.23, statuses:['Backlog','Ready','In Progress','In Review','Accepted']}
+  ]; }
+  get LAYOUTS(){ return {
+    'uart': {
+      rtl: {
+        ip: {
+          uart_core: ['uart_top.v','uart_regs.v','ctrl_fsm.v','apb_if.v'],
+          baud_gen: ['baud_div.v','clk_sync.v','frac_acc.v'],
+          fifo: ['fifo_rx.v','fifo_tx.v','fifo_ctrl.v','ram_dp.v']
+        },
+        block: {
+          rx_path: ['rx_shift.v','parity_chk.v','oversample.v','glitch_filt.v'],
+          tx_path: ['tx_shift.v','parity_gen.v','shaper.v']
+        }
+      },
+      verif: { uvm: ['uart_env.sv','uart_seq.sv','scoreboard.sv','coverage.sv'], tb: ['tb_top.sv','clk_rst.sv'] },
+      constraints: ['uart.sdc','pins.xdc'],
+      docs: ['protocol.md','registers.md']
+    },
+    'firmware': {
+      rtl: {
+        ip: { spi_master: ['spi_top.v','spi_shift.v','cs_ctrl.v'], i2c_master: ['i2c_top.v','i2c_sm.v'], pwm: ['pwm_gen.v','deadband.v'] },
+        block: { clk_rst: ['pll.v','rst_sync.v','clk_mux.v'], irq: ['irq_ctrl.v','vector_tbl.v'] }
+      },
+      src: { drivers: { spi: ['spi.c','spi_dma.c'], i2c: ['i2c.c','i2c_isr.c'], adc: ['adc.c'], gpio: ['gpio.c'] }, rtos: ['sched.c','mutex.c','queue.c','timer.c'], hal: ['clock.c','flash.c','power.c'], app: ['main.c','state.c','telemetry.c','config.c'] },
+      tests: ['test_sched.c','test_spi.c'],
+      tools: ['flash.py','monitor.py']
+    },
+    'bootloader': {
+      src: { core: ['boot.c','loader.c','stage2.c'], crypto: ['crc.c','sha256.c','ecdsa.c'] },
+      arch: { arm: { cortex_m4: ['startup.s','vectors.c','mpu.c'], cortex_m0: ['startup.s','vectors.c'] }, riscv: ['startup.s','trap.c'] },
+      ld: ['link.ld','memory.ld'],
+      tests: ['test_crc.c','test_crypto.c']
+    },
+    'web-console': {
+      src: { components: { charts: ['Treemap.tsx','Line.tsx','Heatmap.tsx'], layout: ['TopBar.tsx','Drawer.tsx','Tabs.tsx'], table: ['Table.tsx'] }, pages: ['Git.tsx','Trackers.tsx'], api: ['client.ts','types.ts'], store: ['filters.ts','cache.ts'] },
+      public: ['index.html','favicon.svg'],
+      styles: ['tokens.css','base.css'],
+      tests: ['treemap.test.ts']
+    },
+    'telemetry-service': {
+      cmd: ['main.go'],
+      internal: { ingest: { git: ['clone.go','walk.go','diff.go'], tuleap: ['fetch.go','parse.go'] }, store: ['pg.go','schema.go','query.go'], api: ['handler.go','router.go'] },
+      pkg: ['git.go','tuleap.go'],
+      migrations: ['0001_init.sql','0002_links.sql'],
+      tests: ['ingest_test.go','store_test.go']
+    },
+    'docs-portal': {
+      content: { guides: ['setup.md','architecture.md','ci.md'], reference: ['api.md','cli.md'] },
+      src: ['build.js','nav.js'],
+      themes: ['default.css'],
+      static: ['logo.svg']
+    }
+  }; }
+
+  // ---------- buckets (18 months) ----------
+  get ALLMONTHS(){ if(this._m) return this._m; const arr=[]; const start=new Date(Date.UTC(2025,0,1)); const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; for(let i=0;i<18;i++){ const d=new Date(Date.UTC(2025,i,1)); arr.push({key:d.toISOString().slice(0,10), label:M[d.getUTCMonth()], year:d.getUTCFullYear(), month:d.getUTCMonth(), t:d.getTime()}); } this._m=arr; return arr; }
+  get ALLWEEKS(){ if(this._w) return this._w; const arr=[]; const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; let d=new Date(Date.UTC(2025,0,6)); for(let i=0;i<78;i++){ const dd=new Date(d.getTime()); arr.push({key:dd.toISOString().slice(0,10), label:M[dd.getUTCMonth()]+' '+dd.getUTCDate(), month:dd.getUTCMonth(), t:dd.getTime()}); d=new Date(d.getTime()+7*864e5);} this._w=arr; return arr; }
+  bucketsAll(){ return this.state.bucket==='month'? this.ALLMONTHS : this.ALLWEEKS; }
+  buckets(){ const all=this.bucketsAll(); const f=this.state.from, t=this.state.to; if(!f||!t) return all; return all.filter(b=> b.key>=f && b.key<=t ); }
+
+  // ---------- tree ----------
+  buildRepoTree(repoName){
+    const rng=this.rng(this.hash(repoName+'|tree'));
+    const dir=(name,path,children)=>({name,path,is_leaf:false,children,commits:children.reduce((s,c)=>s+c.commits,0),churn:children.reduce((s,c)=>s+c.churn,0),files:children.reduce((s,c)=>s+c.files,0)});
+    const build=(name,path,spec)=>{
+      if(Array.isArray(spec)){
+        const ch=spec.map(f=>{ const c=Math.round((0.15+Math.pow(rng(),1.7))*(28+rng()*300)); const churn=Math.round(c*(16+rng()*170)); const files=Math.max(1,Math.round(c*(0.5+rng()*0.9))); return {name:f,path:path+'/'+f,is_leaf:true,commits:c,churn,files}; });
+        return dir(name,path,ch);
+      }
+      const ch=Object.keys(spec).map(k=>build(k,path+'/'+k,spec[k]));
+      return dir(name,path,ch);
+    };
+    const layout=this.LAYOUTS[repoName];
+    const kids=Object.keys(layout).map(k=>build(k,repoName+'/'+k,layout[k]));
+    return dir(repoName,repoName,kids);
+  }
+  get TREES(){ if(this._t) return this._t; this._t={}; this.REPOS.forEach(r=>this._t[r.name]=this.buildRepoTree(r.name)); return this._t; }
+
+  rootNode(){
+    const sel = this.state.repos || this.REPOS.map(r=>r.name);
+    const kids = this.REPOS.filter(r=>sel.includes(r.name)).map(r=>this.TREES[r.name]);
+    return {name:'root',path:'root',is_leaf:false,children:kids,commits:kids.reduce((s,c)=>s+c.commits,0),churn:kids.reduce((s,c)=>s+c.churn,0),files:kids.reduce((s,c)=>s+c.files,0)};
+  }
+  // ---- zone grouping (configurable top level) ----
+  classifyZone(path){ const segs=path.split('/'); for(const z of this.state.zones){ if((z.dirs||[]).some(d=>d&&segs.includes(d))) return z.name; } return 'Other'; }
+  makeTreeFromLeaves(rootName, leaves){
+    const root={name:rootName, path:'root/'+rootName, is_leaf:false, children:[], _m:{}};
+    for(const lf of leaves){ const segs=lf.path.split('/'); let cur=root;
+      for(let i=0;i<segs.length;i++){ const last=i===segs.length-1; const nm=segs[i];
+        if(last){ cur.children.push({name:nm, path:lf.path, is_leaf:true, commits:lf.commits, churn:lf.churn, files:lf.files}); }
+        else { let nx=cur._m[nm]; if(!nx){ nx={name:nm, path:cur.path+'/'+nm, is_leaf:false, children:[], _m:{}}; cur._m[nm]=nx; cur.children.push(nx); } cur=nx; }
+      }
+    }
+    const fin=(n)=>{ if(n.is_leaf) return; delete n._m; n.children.forEach(fin); n.commits=n.children.reduce((s,c)=>s+c.commits,0); n.churn=n.children.reduce((s,c)=>s+c.churn,0); n.files=n.children.reduce((s,c)=>s+c.files,0); };
+    fin(root); return root;
+  }
+  zoneRoot(){
+    const sel = this.state.repos || this.REPOS.map(r=>r.name);
+    const leaves=[]; this.REPOS.filter(r=>sel.includes(r.name)).forEach(r=> leaves.push(...this.collectLeaves(this.TREES[r.name])));
+    const groups={}; leaves.forEach(lf=>{ const z=this.classifyZone(lf.path); (groups[z]=groups[z]||[]).push(lf); });
+    const order=this.state.zones.map(z=>z.name).concat(['Other']);
+    const kids=order.filter(nm=>groups[nm]&&groups[nm].length).map(nm=> this.makeTreeFromLeaves(nm, groups[nm]));
+    return {name:'root',path:'root',is_leaf:false,children:kids,commits:kids.reduce((s,c)=>s+c.commits,0),churn:kids.reduce((s,c)=>s+c.churn,0),files:kids.reduce((s,c)=>s+c.files,0)};
+  }
+  currentRoot(){ return this.state.groupBy==='zone'? this.zoneRoot() : this.rootNode(); }
+  rootIndexOf(name){ if(this.state.groupBy==='zone'){ const names=this.state.zones.map(z=>z.name).concat(['Other']); const i=names.indexOf(name); return i<0?0:i; } return this.repoIndex(name); }
+  rootLabel(){ return this.state.groupBy==='zone'?'zones':'repos'; }
+  updateZone(i, patch){ const zs=this.state.zones.map((z,j)=> j===i? {...z,...patch}:z); this.set({zones:zs, drill:[]}); }
+  addZone(){ this.set({zones:[...this.state.zones, {name:'New zone', dirs:[]}], drill:[]}); }
+  removeZone(i){ this.set({zones:this.state.zones.filter((_,j)=>j!==i), drill:[]}); }
+  currentNode(){ let node=this.currentRoot(); for(const seg of this.state.drill){ if(!node.children) break; const nx=node.children.find(c=>c.name===seg); if(!nx) break; node=nx; } return node; }
+
+  // ---------- scoped derived series ----------
+  contributorsFor(node){
+    const m=this.state.metric; const total=node[m]||1;
+    const rng=this.rng(this.hash(node.path+'|'+m+'|contrib'));
+    let arr=this.AUTHORS.map(([name,w])=>({author:name, w:Math.max(0.02, w*(0.55+rng()*1.0))}));
+    const sw=arr.reduce((s,a)=>s+a.w,0);
+    arr=arr.map(a=>({author:a.author, value:Math.max(1,Math.round(total*a.w/sw))}));
+    arr.sort((a,b)=>b.value-a.value);
+    return arr;
+  }
+  trendFor(node){
+    const m=this.state.metric; const bs=this.buckets(); const n=bs.length||1;
+    const total=node[m]||1;
+    const seed=this.hash(node.path+'|'+m+'|'+this.state.bucket);
+    const rng=this.rng(seed); const ph=seed%7;
+    let w=[]; for(let i=0;i<n;i++){ const t=n>1?i/(n-1):0.5; const ramp=0.45+0.85*t; const season=1+0.28*Math.sin(t*Math.PI*2.6+ph)+0.14*Math.sin(t*Math.PI*7+ph); const noise=0.6+rng()*0.85; w.push(Math.max(0.04, ramp*season*noise)); }
+    const sw=w.reduce((a,b)=>a+b,0)||1;
+    return bs.map((b,i)=>({bucket:b.key, label:b.label, value:Math.max(0,Math.round(total*w[i]/sw))}));
+  }
+
+  // ---------- tracker series ----------
+  trkFrac(){ const sel=this.state.trackers; return this.TRACKERS.filter(t=>sel.includes(t.id)).reduce((s,t)=>s+t.w,0); }
+  backlogSeries(){
+    const bs=this.buckets(); const frac=this.trkFrac(); if(bs.length===0||frac===0) return [];
+    const rng=this.rng(this.hash('backlog|'+this.state.bucket));
+    const base=this.state.bucket==='month'?20:6;
+    let open=this.state.bucket==='month'?16:16; const raw=[];
+    for(let i=0;i<bs.length;i++){ const t=bs.length>1?i/(bs.length-1):0; const taper=1-0.55*t; let opened=Math.round(base*(0.7+rng()*0.9)*(1+0.28*Math.sin(t*7))); let closed=Math.round(opened*(0.5+rng()*0.42+0.28*t)); open=Math.max(0,open+opened-closed); raw.push({opened,closed,open}); }
+    const maxOpen=Math.max(...raw.map(r=>r.open),1); const target=92; const k=target/maxOpen;
+    return bs.map((b,i)=>({bucket:b.key,label:b.label, opened:Math.max(0,Math.round(raw[i].opened*frac)), closed:Math.max(0,Math.round(raw[i].closed*frac)), open_count:Math.max(0,Math.round(raw[i].open*k*frac))}));
+  }
+  cycleRows(){
+    const frac=this.trkFrac()/ this.TRACKERS.reduce((s,t)=>s+t.w,0);
+    const names=['Priya Nadkarni','Marek Kowalski','Diego Fuentes','Lena Fischer','Sam Okafor','Yuki Tanaka','Tom Byrne','Aisha Rahman','Ravi Menon'];
+    return names.map(nm=>{ const rng=this.rng(this.hash(nm+'|cycle')); const close=Math.round(3+rng()*21); const age=Math.round(close*(0.8+rng()*1.6)+4); const closed=Math.round((10+rng()*52)*frac); const open=Math.round((2+rng()*15)*frac); return {assignee:nm, median_days_to_close:close, median_open_age_days:age, open_count:open, closed_count:closed}; })
+      .sort((a,b)=>b.median_open_age_days-a.median_open_age_days);
+  }
+
+  // ---------- cross-links data ----------
+  get ARTIFACTS(){ return [
+    {id:'A1', tracker:'Bugs', ref:'bug #4821', title:'UART RX overrun under sustained 921600 baud', status:'In Progress', assignee:'Priya Nadkarni', opened:'2026-05-14', age:12,
+      commits:['C1','C2','C5'] },
+    {id:'A2', tracker:'User Stories', ref:'story #2103', title:'Batch ingest links commits to Tuleap artifacts', status:'In Review', assignee:'Diego Fuentes', opened:'2026-04-02', age:31,
+      commits:['C3','C4'] },
+    {id:'A3', tracker:'Tasks', ref:'task #7740', title:'Add DMA double-buffer to reduce ISR load', status:'Doing', assignee:'Marek Kowalski', opened:'2026-05-28', age:6,
+      commits:['C6'] },
+    {id:'A4', tracker:'Bugs', ref:'bug #4790', title:'Bootloader CRC mismatch on RISC-V target', status:'Confirmed', assignee:'Lena Fischer', opened:'2026-05-02', age:24,
+      commits:['C7','C8'] }
+  ]; }
+  get COMMITS(){ return {
+    C1:{sha:'a1c9f2e', repo:'uart', author:'Priya Nadkarni', when:'2026-05-20', msg:'uart: guard RX ring against overrun', artifacts:['A1']},
+    C2:{sha:'7d3b0aa', repo:'uart', author:'Priya Nadkarni', when:'2026-05-22', msg:'uart: add overrun counter to stats', artifacts:['A1']},
+    C3:{sha:'e0f4b71', repo:'telemetry-service', author:'Diego Fuentes', when:'2026-04-11', msg:'ingest: parse Tuleap cross-reference syntax', artifacts:['A2']},
+    C4:{sha:'2b8c910', repo:'telemetry-service', author:'Diego Fuentes', when:'2026-04-18', msg:'store: persist commit<->artifact link table', artifacts:['A2']},
+    C5:{sha:'ccd1e34', repo:'uart', author:'Sam Okafor', when:'2026-05-25', msg:'uart: fifo watermark tuning for high baud', artifacts:['A1']},
+    C6:{sha:'9a77f02', repo:'firmware', author:'Marek Kowalski', when:'2026-05-30', msg:'drivers/dma: introduce double-buffer path', artifacts:['A3']},
+    C7:{sha:'44be5d1', repo:'bootloader', author:'Lena Fischer', when:'2026-05-06', msg:'crc: fix polynomial init for riscv build', artifacts:['A4']},
+    C8:{sha:'f31029c', repo:'bootloader', author:'Lena Fischer', when:'2026-05-09', msg:'arch/riscv: align vector table to 64B', artifacts:['A4']}
+  }; }
+
+  // ---------- color helpers ----------
+  hexToRgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
+  lum(hex){ const [r,g,b]=this.hexToRgb(hex).map(v=>{v/=255; return v<=0.03928? v/12.92 : Math.pow((v+0.055)/1.055,2.4);}); return 0.2126*r+0.7152*g+0.0722*b; }
+  shade(hex, amt){ // amt -1..1
+    let [r,g,b]=this.hexToRgb(hex);
+    if(amt>=0){ r=r+(255-r)*amt; g=g+(255-g)*amt; b=b+(255-b)*amt; }
+    else { r=r*(1+amt); g=g*(1+amt); b=b*(1+amt); }
+    return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+  }
+  repoIndex(name){ const i=this.REPOS.findIndex(r=>r.name===name); return i<0?0:i; }
+
+  // ---------- number fmt ----------
+  fmt(n){ n=Math.round(n); const a=Math.abs(n); if(a>=1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M'; if(a>=1e4) return (n/1e3).toFixed(0)+'k'; if(a>=1e3) return (n/1e3).toFixed(1)+'k'; return ''+n; }
+  fmtFull(n){ return Math.round(n).toLocaleString('en-US'); }
+  metricLabel(){ return {commits:'commits', churn:'lines churned', files:'files touched'}[this.state.metric]; }
+  metricShort(){ return this.state.metric; }
+
+  // ---------- treemap layout (squarified) ----------
+  squarify(data, X, Y, W, H){
+    data=data.filter(d=>d.value>0).slice().sort((a,b)=>b.value-a.value);
+    const nodes=[]; if(data.length===0) return nodes;
+    const total=data.reduce((s,d)=>s+d.value,0)||1; const scale=(W*H)/total;
+    const items=data.map(d=>({d, a:d.value*scale}));
+    let x=X,y=Y,w=W,h=H;
+    const worst=(row,len)=>{ let s=0,mn=Infinity,mx=0; for(const r of row){s+=r.a; if(r.a<mn)mn=r.a; if(r.a>mx)mx=r.a;} const s2=s*s,l2=len*len; return Math.max((l2*mx)/s2, s2/(l2*mn)); };
+    const place=(row)=>{ const s=row.reduce((a,r)=>a+r.a,0); if(w>=h){ const rw=s/h; let yy=y; for(const r of row){ const rh=r.a/rw; nodes.push({d:r.d,x,y:yy,w:rw,h:rh}); yy+=rh; } x+=rw; w-=rw; } else { const rh=s/w; let xx=x; for(const r of row){ const rw=r.a/rh; nodes.push({d:r.d,x:xx,y,w:rw,h:rh}); xx+=rw; } y+=rh; h-=rh; } };
+    let row=[];
+    for(let i=0;i<items.length;i++){ const len=Math.min(w,h)||1; const it=items[i]; if(row.length===0){ row=[it]; continue; } if(worst(row,len) >= worst(row.concat(it),len)) row.push(it); else { place(row); row=[it]; } }
+    if(row.length) place(row);
+    return nodes;
+  }
+
+  // ================= RENDER =================
+  renderVals(){ return { theme:this.state.theme, app:this.renderApp() }; }
+
+  set(patch){ this.setState(patch); }
+  h(){ return React.createElement.apply(React, arguments); }
+
+  renderApp(){
+    const h=this.h.bind(this);
+    const pad = this.state.vw<640?14:24;
+    const pageW = Math.min(this.state.vw, 1400) - pad*2;
+    const narrow = this.state.vw<880;
+    const ctx = { h, pad, pageW, narrow };
+    return h('div',{style:{position:'relative'}},
+      this.topbar(ctx),
+      h('div',{style:{maxWidth:1400, margin:'0 auto', padding:`0 ${pad}px 64px`}},
+        this.tabs(ctx),
+        h('div',{key:this.state.page+this.state.metric+this.state.bucket, style:{animation:'dcfade .25s ease'}},
+          this.state.page==='git'? this.gitPage(ctx) : this.trackersPage(ctx)
+        )
+      ),
+      this.state.drawer? this.drawer(ctx): null,
+      this.tooltipEl(ctx)
+    );
+  }
+
+  // ---------- shared UI atoms ----------
+  seg(options, value, onPick, key){ const h=this.h.bind(this);
+    return h('div',{style:{display:'inline-flex', padding:3, gap:2, background:'var(--panel2)', border:'1px solid var(--border)', borderRadius:9}},
+      options.map(o=> h('button',{key:o.v, onClick:()=>onPick(o.v), style:{
+        cursor:'pointer', border:'none', borderRadius:6, padding:'6px 12px', fontFamily:'inherit', fontSize:12.5, fontWeight:600, letterSpacing:0.2,
+        background: value===o.v? 'var(--accent)':'transparent', color: value===o.v? '#fff':'var(--muted)', transition:'all .12s'
+      }}, o.l))
+    );
+  }
+  iconBtn(child, onClick, active, title){ const h=this.h.bind(this);
+    return h('button',{onClick, title, style:{cursor:'pointer', width:34, height:34, display:'grid', placeItems:'center', borderRadius:8, border:'1px solid var(--border)', background: active?'var(--accentweak)':'var(--panel2)', color:'var(--text)', fontSize:14}}, child);
+  }
+
+  topbar(ctx){ const h=ctx.h; const t=this.state;
+    return h('header',{style:{position:'sticky', top:0, zIndex:40, background:'color-mix(in srgb, var(--surface) 82%, transparent)', backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)', borderBottom:'1px solid var(--border)'}},
+      h('div',{style:{maxWidth:1400, margin:'0 auto', padding:`10px ${ctx.pad}px`, display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}},
+        // brand
+        h('div',{style:{display:'flex', alignItems:'center', gap:10, marginRight:'auto', minWidth:0}},
+          h('div',{style:{width:30, height:30, borderRadius:8, background:'linear-gradient(135deg,var(--accent),var(--accent2))', display:'grid', placeItems:'center', color:'#fff', flexShrink:0, boxShadow:'0 2px 8px var(--accentweak)'}},
+            h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2.4,strokeLinecap:'round'}, h('circle',{cx:6,cy:6,r:2.4}),h('circle',{cx:6,cy:18,r:2.4}),h('circle',{cx:18,cy:12,r:2.4}),h('path',{d:'M6 8.4v7.2M8 6h4.5a3 3 0 013 3v0'}))
+          ),
+          h('div',{style:{lineHeight:1.15, minWidth:0}},
+            h('div',{style:{fontSize:14.5, fontWeight:700, letterSpacing:-0.1, whiteSpace:'nowrap'}}, 'Activity Monitor'),
+            h('div',{style:{fontSize:11, color:'var(--faint)', whiteSpace:'nowrap'}}, 'Git + Tuleap · LAN')
+          )
+        ),
+        // repo multi-select
+        this.repoSelect(ctx),
+        // date range
+        !ctx.narrow? this.dateRange(ctx): null,
+        // bucket toggle
+        this.seg([{v:'week',l:'Week'},{v:'month',l:'Month'}], t.bucket, v=>this.set({bucket:v})),
+        // theme
+        this.iconBtn(t.theme==='dark'? this.icoSun():this.icoMoon(), ()=>this.set({theme:t.theme==='dark'?'light':'dark'}), false, 'Toggle theme')
+      ),
+      ctx.narrow? h('div',{style:{maxWidth:1400, margin:'0 auto', padding:`0 ${ctx.pad}px 10px`}}, this.dateRange(ctx)) : null
+    );
+  }
+  icoSun(){ const h=this.h.bind(this); return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2,strokeLinecap:'round'},h('circle',{cx:12,cy:12,r:4}),h('path',{d:'M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'})); }
+  icoMoon(){ const h=this.h.bind(this); return h('svg',{width:15,height:15,viewBox:'0 0 24 24',fill:'currentColor'},h('path',{d:'M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z'})); }
+
+  repoSelect(ctx){ const h=ctx.h; const sel=this.state.repos||[]; const all=this.REPOS;
+    const label = sel.length===all.length? 'All repos' : sel.length+' repo'+(sel.length===1?'':'s');
+    return h('div',{'data-pop':1, style:{position:'relative'}},
+      h('button',{onClick:(e)=>{e.stopPropagation(); this.set({repoOpen:!this.state.repoOpen, trkOpen:false});}, style:{cursor:'pointer', display:'flex', alignItems:'center', gap:8, height:34, padding:'0 11px', borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)', color:'var(--text)', fontFamily:'inherit', fontSize:12.5, fontWeight:600}},
+        h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'var(--muted)',strokeWidth:2},h('path',{d:'M3 6h18M3 12h18M3 18h18'})),
+        label,
+        h('svg',{width:12,height:12,viewBox:'0 0 24 24',fill:'none',stroke:'var(--faint)',strokeWidth:2.4},h('path',{d:'M6 9l6 6 6-6'}))
+      ),
+      this.state.repoOpen? h('div',{style:this.popStyle(260)},
+        h('div',{style:this.popHeadStyle()},
+          h('span',{style:{fontSize:11, color:'var(--faint)', fontWeight:600, textTransform:'uppercase', letterSpacing:0.6}}, 'Repositories'),
+          h('button',{onClick:()=>this.set({repos: sel.length===all.length? [] : all.map(r=>r.name)}), style:this.popActionStyle()}, sel.length===all.length?'Clear':'All')
+        ),
+        all.map((r,i)=> this.checkRow(r.name, sel.includes(r.name), ()=>this.toggleRepo(r.name), h('span',{style:{width:8,height:8,borderRadius:2,background:this.PALETTE[i],flexShrink:0}}), r.default_branch))
+      ):null
+    );
+  }
+  toggleRepo(name){ let sel=(this.state.repos||[]).slice(); if(sel.includes(name)) sel=sel.filter(x=>x!==name); else sel.push(name); this.set({repos:sel, drill: this.state.drill.length&&!sel.includes(this.state.drill[0])? []: this.state.drill}); }
+
+  popStyle(w){ return {position:'absolute', top:42, right:0, width:w, background:'var(--panel)', border:'1px solid var(--border2)', borderRadius:12, boxShadow:'var(--shadow)', padding:6, zIndex:50}; }
+  popHeadStyle(){ return {display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 8px 8px'}; }
+  popActionStyle(){ return {cursor:'pointer', background:'none', border:'none', color:'var(--accent)', fontFamily:'inherit', fontSize:11.5, fontWeight:600}; }
+  checkRow(label, on, onClick, dot, meta){ const h=this.h.bind(this);
+    return h('button',{key:label, onClick, style:{width:'100%', display:'flex', alignItems:'center', gap:9, padding:'8px 8px', borderRadius:8, border:'none', background:'transparent', color:'var(--text)', cursor:'pointer', fontFamily:'inherit', fontSize:13, textAlign:'left'}, onMouseEnter:e=>e.currentTarget.style.background='var(--hover)', onMouseLeave:e=>e.currentTarget.style.background='transparent'},
+      h('span',{style:{width:16,height:16,borderRadius:5, border:'1.5px solid '+(on?'var(--accent)':'var(--border2)'), background:on?'var(--accent)':'transparent', display:'grid', placeItems:'center', flexShrink:0}}, on? h('svg',{width:10,height:10,viewBox:'0 0 24 24',fill:'none',stroke:'#fff',strokeWidth:3.4,strokeLinecap:'round'},h('path',{d:'M4 12l5 5L20 6'})):null),
+      dot||null,
+      h('span',{style:{flex:1, fontWeight:500}}, label),
+      meta? h('span',{style:{fontSize:10.5, color:'var(--faint)', fontFamily:"'IBM Plex Mono',monospace"}}, meta):null
+    );
+  }
+  dateRange(ctx){ const h=ctx.h; const inp=(val,onCh)=> h('input',{type:'date', value:val||'', min:this.ALLMONTHS[0].key, max:this.ALLMONTHS[this.ALLMONTHS.length-1].key, onChange:e=>onCh(e.target.value), style:{fontFamily:"'IBM Plex Mono',monospace", fontSize:12, height:34, padding:'0 8px', borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)', color:'var(--text)', colorScheme:this.state.theme}});
+    return h('div',{style:{display:'flex', alignItems:'center', gap:6, background:'var(--panel2)', border:'1px solid var(--border)', borderRadius:9, padding:'0 4px', height:34}},
+      h('span',{style:{fontSize:11, color:'var(--faint)', fontWeight:600, padding:'0 2px'}}, 'From'),
+      inp(this.state.from, v=>this.set({from:v})),
+      h('span',{style:{fontSize:11, color:'var(--faint)', fontWeight:600}}, 'To'),
+      inp(this.state.to, v=>this.set({to:v}))
+    );
+  }
+
+  tabs(ctx){ const h=ctx.h; const tab=(id,label,ico)=> h('button',{onClick:()=>this.set({page:id}), style:{position:'relative', cursor:'pointer', display:'flex', alignItems:'center', gap:8, padding:'14px 4px', border:'none', background:'none', fontFamily:'inherit', fontSize:14, fontWeight:600, color:this.state.page===id?'var(--text)':'var(--muted)'}},
+      ico, label, this.state.page===id? h('span',{style:{position:'absolute', left:0, right:0, bottom:-1, height:2, background:'var(--accent)', borderRadius:2}}):null );
+    return h('nav',{style:{display:'flex', gap:22, borderBottom:'1px solid var(--border)', margin:'0 0 22px'}},
+      tab('git','Git activity', h('svg',{width:15,height:15,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('circle',{cx:6,cy:6,r:2.4}),h('circle',{cx:6,cy:18,r:2.4}),h('circle',{cx:18,cy:9,r:2.4}),h('path',{d:'M6 8.4v7.2M18 11.4c0 3-3 3.6-6 3.6'}))),
+      tab('trackers','Trackers', h('svg',{width:15,height:15,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2,strokeLinecap:'round'},h('path',{d:'M9 5h11M9 12h11M9 19h11'}),h('path',{d:'M4 5l1 1 1.5-2M4 12l1 1 1.5-2M4 19l1 1 1.5-2'})))
+    );
+  }
+
+  // panel wrapper
+  panel(ctx, {title, sub, right, min}, body){ const h=ctx.h;
+    return h('section',{style:{background:'var(--panel)', border:'1px solid var(--border)', borderRadius:16, padding:ctx.narrow?16:20, boxShadow:'var(--shadow)', minWidth:min||0, display:'flex', flexDirection:'column'}},
+      h('div',{style:{display:'flex', alignItems:'flex-start', gap:12, marginBottom:16, flexWrap:'wrap'}},
+        h('div',{style:{minWidth:0, marginRight:'auto'}},
+          h('h2',{style:{margin:0, fontSize:15.5, fontWeight:600, letterSpacing:-0.1}}, title),
+          sub? h('div',{style:{fontSize:12, color:'var(--muted)', marginTop:3, fontFamily:"'IBM Plex Mono',monospace"}}, sub):null
+        ),
+        right||null
+      ),
+      body
+    );
+  }
+
+  // ================= GIT PAGE =================
+  gitPage(ctx){ const h=ctx.h; const node=this.currentNode();
+    const empty = (this.state.repos||[]).length===0;
+    const metricRight = this.seg([{v:'commits',l:'Commits'},{v:'churn',l:'Churn'},{v:'files',l:'Files'}], this.state.metric, v=>this.set({metric:v}));
+    const scope = this.state.drill.length? this.state.drill.join('/')+'/' : 'all repos';
+    return h('div',{style:{display:'flex', flexDirection:'column', gap:16}},
+      // hero treemap
+      this.panel(ctx, {title:'Activity by path', sub:'sized by '+this.metricLabel()+' · '+scope, right: metricRight},
+        empty? this.emptyState(ctx,'Select at least one repository') : this.treemap(ctx, node)
+      ),
+      this.panel(ctx, {title:'Zone activity', sub:'all zones per '+this.state.bucket+' · selected repos · '+this.metricShort()}, empty? this.emptyState(ctx,'No selection'): this.zoneMatrix(ctx)),
+      // two-up
+      h('div',{style:{display:'grid', gridTemplateColumns: ctx.narrow?'1fr':'minmax(0,5fr) minmax(0,7fr)', gap:16}},
+        this.panel(ctx, {title:'Contributors', sub:'scoped to '+scope+' · '+this.metricShort(), min:0}, empty? this.emptyState(ctx,'No selection'): this.contributors(ctx, node)),
+        this.panel(ctx, {title:'Trend', sub:'per '+this.state.bucket+' · '+scope+' · '+this.metricShort(), min:0}, empty? this.emptyState(ctx,'No selection'): this.trend(ctx, node))
+      ),
+      this.panel(ctx, {title:'Committer activity', sub:'all committers per '+this.state.bucket+' · '+scope+' · '+this.metricShort()}, empty? this.emptyState(ctx,'No selection'): this.committerMatrix(ctx, node)),
+      this.panel(ctx, {title:'Contribution mix', sub:'where each committer contributes · '+(this.state.drill.length? 'within '+scope : 'by '+(this.state.groupBy==='zone'?'zone':'repository'))+' · '+this.metricShort()}, empty? this.emptyState(ctx,'No selection'): this.contributionMix(ctx, node)),
+      this.panel(ctx, {title:'Commit rhythm', sub:'weekday × hour of day · '+scope+' · '+this.metricShort()}, empty? this.emptyState(ctx,'No selection'): this.punchcard(ctx, node)),
+      h('div',{style:{display:'grid', gridTemplateColumns: ctx.narrow?'1fr':'minmax(0,1fr) minmax(0,1fr)', gap:16}},
+        this.panel(ctx, {title:'Code frequency', sub:'lines added / removed per '+this.state.bucket+' · '+scope, min:0}, empty? this.emptyState(ctx,'No selection'): this.codeFreq(ctx, node)),
+        this.panel(ctx, {title:'Top files', sub:'by '+this.metricLabel()+' · '+scope, min:0}, empty? this.emptyState(ctx,'No selection'): this.topFiles(ctx, node))
+      )
+    );
+  }
+
+  emptyState(ctx, msg){ const h=ctx.h; return h('div',{style:{height:200, display:'grid', placeItems:'center', color:'var(--faint)', gap:10, textAlign:'center'}},
+    h('svg',{width:34,height:34,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.5},h('circle',{cx:11,cy:11,r:7}),h('path',{d:'M21 21l-4-4'})),
+    h('div',{style:{fontSize:13, fontWeight:500}}, msg||'No activity in this selection')
+  ); }
+
+  breadcrumb(ctx){ const h=ctx.h; const segs=[this.rootLabel(), ...this.state.drill];
+    return h('div',{style:{display:'flex', alignItems:'center', gap:4, flexWrap:'wrap', marginBottom:12, fontFamily:"'IBM Plex Mono',monospace", fontSize:12.5}},
+      segs.map((s,i)=> h('span',{key:i, style:{display:'inline-flex', alignItems:'center', gap:4}},
+        i>0? h('span',{style:{color:'var(--faint)'}}, '/'):null,
+        h('button',{onClick:()=>this.set({drill:this.state.drill.slice(0,i)}), disabled:i===segs.length-1, style:{cursor:i===segs.length-1?'default':'pointer', border:'none', background: i===segs.length-1?'var(--accentweak)':'transparent', color:i===segs.length-1?'var(--accent)':'var(--muted)', padding:'3px 7px', borderRadius:6, fontFamily:'inherit', fontSize:12.5, fontWeight:i===segs.length-1?600:500}}, s)
+      ))
+    );
+  }
+
+  treemap(ctx, node){ const h=ctx.h;
+    const W = ctx.pageW - (ctx.narrow?32:40); const Wc=Math.max(320, W); const Hc = ctx.narrow?340:440;
+    const m=this.state.metric;
+    const children=(node.children||[]).map(c=>({node:c, value:c[m]||0, name:c.name, is_leaf:c.is_leaf})).filter(c=>c.value>0);
+    if(children.length===0) return h('div',null, this.breadcrumb(ctx), this.emptyState(ctx,'No activity in this selection'));
+    const rects=this.squarify(children, 0,0,Wc,Hc);
+    const atRoot=this.state.drill.length===0;
+    const baseRepo = atRoot? null : this.state.drill[0];
+    const sorted=children.slice().sort((a,b)=>b.value-a.value);
+    const total=children.reduce((s,c)=>s+c.value,0)||1;
+    const gap=2, rad=5;
+    return h('div',null,
+      this.groupControl(ctx),
+      this.breadcrumb(ctx),
+      h('div',{style:{width:'100%', overflow:'hidden', borderRadius:10}},
+      h('svg',{width:Wc, height:Hc, viewBox:`0 0 ${Wc} ${Hc}`, style:{width:'100%', height:'auto', display:'block'}},
+        rects.map((r,ri)=>{ const idx=sorted.findIndex(s=>s.node===r.d.node); const cnt=sorted.length;
+          let fill; if(atRoot){ fill=this.PALETTE[this.rootIndexOf(r.d.name)%this.PALETTE.length]; } else { const base=this.PALETTE[this.rootIndexOf(baseRepo)%this.PALETTE.length]; const tpos=cnt>1? idx/(cnt-1):0; fill=this.shade(base, -0.28 + tpos*0.5); }
+          const light=this.lum(fill)>0.55; const txt=light?'#0b0c0e':'#ffffff';
+          const showLabel=r.w>44 && r.h>26; const showVal=r.w>60 && r.h>44;
+          const clickable=!r.d.is_leaf;
+          const pct=(r.d.value/total*100);
+          return h('g',{key:ri, style:{cursor:clickable?'pointer':'default'},
+              onClick:()=> clickable && this.set({drill:[...this.state.drill, r.d.name]}),
+              onMouseMove:(e)=>this.showTip(e, this.treeTip(r.d)),
+              onMouseLeave:()=>this.hideTip()},
+            h('rect',{x:r.x+gap/2, y:r.y+gap/2, width:Math.max(0,r.w-gap), height:Math.max(0,r.h-gap), rx:rad, fill, fillOpacity: r.d.is_leaf?0.82:1, stroke:'var(--panel)', strokeWidth:1}),
+            showLabel? h('text',{x:r.x+9, y:r.y+19, fill:txt, fontSize:12, fontWeight:600, fontFamily:'IBM Plex Sans', style:{pointerEvents:'none'}}, this.truncate(r.d.name, r.w-14)) : null,
+            showVal? h('text',{x:r.x+9, y:r.y+35, fill:txt, fontSize:11, fontFamily:'IBM Plex Mono', opacity:0.82, style:{pointerEvents:'none'}}, this.fmt(r.d.value)+(pct>4?' · '+pct.toFixed(0)+'%':'')) : null,
+            (showLabel && !r.d.is_leaf && r.w>30)? h('text',{x:r.x+r.w-8, y:r.y+18, fill:txt, opacity:0.7, fontSize:13, textAnchor:'end', style:{pointerEvents:'none'}}, '›'):null
+          );
+        })
+      )),
+      // legend / hint
+      h('div',{style:{display:'flex', alignItems:'center', gap:14, marginTop:12, flexWrap:'wrap', fontSize:11.5, color:'var(--muted)'}},
+        atRoot? h('div',{style:{display:'flex', gap:12, flexWrap:'wrap'}}, (node.children||[]).map((c)=> h('span',{key:c.name, style:{display:'inline-flex', alignItems:'center', gap:6}}, h('span',{style:{width:9,height:9,borderRadius:2,background:this.PALETTE[this.rootIndexOf(c.name)%this.PALETTE.length]}}), c.name))) : h('span',{style:{fontFamily:"'IBM Plex Mono',monospace"}}, (this.state.groupBy==='zone'?'zone · ':'directory · ')+this.metricShort()+' — click a node to drill in'),
+        h('span',{style:{marginLeft:'auto', fontFamily:"'IBM Plex Mono',monospace"}}, this.fmtFull(node[m])+' '+this.metricShort()+' total')
+      )
+    );
+  }
+  truncate(s, px){ const max=Math.floor(px/7); return s.length>max? s.slice(0,Math.max(1,max-1))+'…' : s; }
+  treeTip(d){ return {title:d.path.replace(/^root\//,''), rows:[ [this.metricLabel(), this.fmtFull(d[this.state.metric])], ['commits', this.fmtFull(d.commits)], [d.is_leaf?'type':'files', d.is_leaf?'file':this.fmtFull(d.files)] ], accent: this.PALETTE[this.rootIndexOf(this.state.drill.length? this.state.drill[0] : d.name)%this.PALETTE.length] }; }
+
+  groupControl(ctx){ const h=ctx.h;
+    return h('div',{style:{display:'flex', alignItems:'center', gap:10, marginBottom:12, flexWrap:'wrap'}},
+      h('span',{style:{fontSize:11, color:'var(--faint)', fontWeight:600, textTransform:'uppercase', letterSpacing:0.5}}, 'Group by'),
+      this.seg([{v:'repo',l:'Repository'},{v:'zone',l:'Zone'}], this.state.groupBy, v=>this.set({groupBy:v, drill:[]})),
+      this.state.groupBy==='zone'? h('div',{'data-pop':1, style:{position:'relative'}},
+        h('button',{onClick:(e)=>{e.stopPropagation(); this.set({zoneEditOpen:!this.state.zoneEditOpen});}, style:{cursor:'pointer', display:'inline-flex', alignItems:'center', gap:7, height:32, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)', background: this.state.zoneEditOpen?'var(--accentweak)':'var(--panel2)', color:'var(--text)', fontFamily:'inherit', fontSize:12.5, fontWeight:600}},
+          h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'var(--muted)',strokeWidth:2},h('path',{d:'M12 3v3M12 18v3M5 12H2M22 12h-3M6.3 6.3l-1.4-1.4M18.4 18.4l1.4 1.4'}),h('circle',{cx:12,cy:12,r:3.2})),
+          'Configure zones'
+        ),
+        this.state.zoneEditOpen? this.zoneEditor(ctx) : null
+      ) : null
+    );
+  }
+  zoneEditor(ctx){ const h=ctx.h;
+    const inp=(val,onCh,ph,flex)=> h('input',{value:val, placeholder:ph, onChange:e=>onCh(e.target.value), style:{flex:flex||'none', minWidth:0, height:30, padding:'0 8px', borderRadius:7, border:'1px solid var(--border)', background:'var(--panel2)', color:'var(--text)', fontFamily:"'IBM Plex Mono',monospace", fontSize:11.5}});
+    return h('div',{style:{position:'absolute', top:40, left:0, width:Math.min(this.state.vw-40,430), background:'var(--panel)', border:'1px solid var(--border2)', borderRadius:12, boxShadow:'var(--shadow)', padding:14, zIndex:55}},
+      h('div',{style:{fontSize:11, color:'var(--faint)', fontWeight:600, textTransform:'uppercase', letterSpacing:0.5, marginBottom:4}}, 'Zone definitions'),
+      h('div',{style:{fontSize:11.5, color:'var(--muted)', marginBottom:12, lineHeight:1.4}}, 'A file joins the first zone whose directory list contains any segment of its path. Comma-separate directory names.'),
+      h('div',{style:{display:'flex', flexDirection:'column', gap:8, maxHeight:280, overflowY:'auto'}},
+        this.state.zones.map((z,i)=> h('div',{key:i, style:{display:'flex', alignItems:'center', gap:6}},
+          h('span',{style:{width:9,height:9,borderRadius:2,background:this.PALETTE[i%this.PALETTE.length], flexShrink:0}}),
+          inp(z.name, v=>this.updateZone(i,{name:v}), 'zone', '0 0 96px'),
+          inp((z.dirs||[]).join(', '), v=>this.updateZone(i,{dirs:v.split(',').map(s=>s.trim()).filter(Boolean)}), 'ip, block, …', '1 1 auto'),
+          h('button',{onClick:()=>this.removeZone(i), title:'Remove zone', style:{cursor:'pointer', width:30,height:30, flexShrink:0, borderRadius:7, border:'1px solid var(--border)', background:'var(--panel2)', color:'var(--muted)', display:'grid', placeItems:'center'}}, h('svg',{width:13,height:13,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M5 12h14'})))
+        ))
+      ),
+      h('button',{onClick:()=>this.addZone(), style:{marginTop:12, cursor:'pointer', width:'100%', height:34, borderRadius:8, border:'1px dashed var(--border2)', background:'transparent', color:'var(--accent)', fontFamily:'inherit', fontSize:12.5, fontWeight:600}}, '+ Add zone')
+    );
+  }
+
+  contributors(ctx, node){ const h=ctx.h; const rows=this.contributorsFor(node); const max=Math.max(...rows.map(r=>r.value),1);
+    return h('div',{style:{display:'flex', flexDirection:'column', gap:9, paddingTop:2}},
+      rows.map((r,i)=> h('div',{key:r.author, onMouseMove:(e)=>this.showTip(e,{title:r.author, rows:[[this.metricLabel(),this.fmtFull(r.value)],['share',(r.value/rows.reduce((s,x)=>s+x.value,0)*100).toFixed(1)+'%']], accent:'var(--accent)'}), onMouseLeave:()=>this.hideTip(), style:{display:'grid', gridTemplateColumns:'120px 1fr 52px', alignItems:'center', gap:10, cursor:'default'}},
+        h('div',{style:{fontSize:12.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}, r.author),
+        h('div',{style:{height:22, background:'var(--track)', borderRadius:5, overflow:'hidden', position:'relative'}},
+          h('div',{style:{position:'absolute', inset:0, width:(r.value/max*100)+'%', background:i===0?'var(--accent)':'linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 55%,transparent))', borderRadius:5, transition:'width .4s ease'}})
+        ),
+        h('div',{style:{fontSize:12.5, fontFamily:"'IBM Plex Mono',monospace", textAlign:'right', color:'var(--muted)', fontWeight:500}}, this.fmt(r.value))
+      ))
+    );
+  }
+
+  trendStack(node){ const m=this.state.metric; let kids=(node.children||[]).filter(c=>(c[m]||0)>0).sort((a,b)=>(b[m]||0)-(a[m]||0));
+    if(kids.length===0) return null;
+    const top=kids.slice(0,6), rest=kids.slice(6);
+    const series=top.map(c=>({name:c.name, data:this.trendFor(c)}));
+    if(rest.length){ const datas=rest.map(c=>this.trendFor(c)); const agg=datas[0].map((d,i)=>({bucket:d.bucket, label:d.label, value:datas.reduce((s,dd)=>s+dd[i].value,0)})); series.push({name:'other ('+rest.length+')', data:agg, isOther:true}); }
+    return series;
+  }
+  trend(ctx, node){ const h=ctx.h; const data=this.trendFor(node);
+    if(data.length===0) return this.emptyState(ctx);
+    const series=this.trendStack(node);
+    const W=Math.max(300, (ctx.narrow? ctx.pageW-32 : (ctx.pageW-16)*7/12 - 40)); const H=series?258:248; const P={l:44,r:12,t:14,b:26};
+    const iw=W-P.l-P.r, ih=H-P.t-P.b;
+    const n=data.length;
+    const x=i=> P.l + (n===1? iw/2 : i/(n-1)*iw);
+    const step=Math.ceil(n/ (ctx.narrow?5:8));
+    if(!series){
+      // leaf node — simple line
+      const max=Math.max(...data.map(d=>d.value),1); const yMax=this.niceMax(max);
+      const y=v=> P.t + ih - (v/yMax)*ih;
+      const line=data.map((d,i)=>`${i===0?'M':'L'}${x(i).toFixed(1)} ${y(d.value).toFixed(1)}`).join(' ');
+      const area=`${line} L${x(n-1).toFixed(1)} ${(P.t+ih).toFixed(1)} L${x(0).toFixed(1)} ${(P.t+ih).toFixed(1)} Z`;
+      const ticks=4; const yt=[]; for(let i=0;i<=ticks;i++) yt.push(Math.round(yMax*i/ticks));
+      return h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W,height:H, style:{display:'block', maxWidth:'100%'}, onMouseLeave:()=>this.hideTip()},
+        h('defs',null, h('linearGradient',{id:'tg0', x1:0,y1:0,x2:0,y2:1}, h('stop',{offset:'0%',stopColor:'var(--accent)',stopOpacity:0.28}), h('stop',{offset:'100%',stopColor:'var(--accent)',stopOpacity:0}))),
+        yt.map((v,i)=> h('g',{key:i}, h('line',{x1:P.l,x2:W-P.r, y1:y(v), y2:y(v), stroke:'var(--grid)', strokeWidth:1}), h('text',{x:P.l-8, y:y(v)+4, textAnchor:'end', fontSize:10.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, this.fmt(v)))),
+        h('path',{d:area, fill:'url(#tg0)'}),
+        h('path',{d:line, fill:'none', stroke:'var(--accent)', strokeWidth:2.2, strokeLinejoin:'round', strokeLinecap:'round'}),
+        data.map((d,i)=> i%step===0? h('text',{key:'x'+i, x:x(i), y:H-8, textAnchor:'middle', fontSize:10, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, d.label):null),
+        data.map((d,i)=> h('rect',{key:'h'+i, x:x(i)-iw/n/2, y:P.t, width:Math.max(6,iw/n), height:ih, fill:'transparent', onMouseMove:(e)=>this.showTip(e,{title:d.label, rows:[[this.metricLabel(),this.fmtFull(d.value)]], accent:'var(--accent)'}) }))
+      ));
+    }
+    // stacked breakdown by part — see which part is changing
+    const k=series.length;
+    const totals=data.map((_,i)=> series.reduce((s,sr)=>s+sr.data[i].value,0));
+    const yMax=this.niceMax(Math.max(...totals,1));
+    const y=v=> P.t + ih - (v/yMax)*ih;
+    const colorOf=(sr,si)=> sr.isOther? 'var(--faint)' : this.mixColor(sr.name, si, k);
+    // cumulative stacks
+    const lows=[]; let acc=data.map(()=>0);
+    const bands=series.map((sr,si)=>{ const lo=acc.slice(); acc=acc.map((v,i)=>v+sr.data[i].value); const up=acc.slice();
+      const top=up.map((v,i)=>`${i===0?'M':'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+      const bottom=lo.map((v,i)=>`L${x(lo.length-1-i).toFixed(1)} ${y(lo[lo.length-1-i]).toFixed(1)}`).join(' ');
+      return {d:`${top} ${bottom} Z`, color:colorOf(sr,si), name:sr.name};
+    });
+    const totLine=totals.map((v,i)=>`${i===0?'M':'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+    const ticks=4; const yt=[]; for(let i=0;i<=ticks;i++) yt.push(Math.round(yMax*i/ticks));
+    return h('div',null,
+      h('div',{style:{display:'flex', gap:11, flexWrap:'wrap', marginBottom:8, fontSize:11, color:'var(--muted)'}},
+        series.map((sr,si)=> h('span',{key:sr.name, style:{display:'inline-flex', alignItems:'center', gap:5}}, h('span',{style:{width:9,height:9,borderRadius:2,background:colorOf(sr,si)}}), sr.name))
+      ),
+      h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W,height:H, style:{display:'block', maxWidth:'100%'}, onMouseLeave:()=>this.hideTip()},
+        yt.map((v,i)=> h('g',{key:i}, h('line',{x1:P.l,x2:W-P.r, y1:y(v), y2:y(v), stroke:'var(--grid)', strokeWidth:1}), h('text',{x:P.l-8, y:y(v)+4, textAnchor:'end', fontSize:10.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, this.fmt(v)))),
+        bands.map((b,i)=> h('path',{key:'bd'+i, d:b.d, fill:b.color, fillOpacity:0.78, stroke:'var(--panel)', strokeWidth:0.75})),
+        h('path',{d:totLine, fill:'none', stroke:'var(--text)', strokeWidth:1.4, strokeOpacity:0.55, strokeDasharray:'1 3', strokeLinecap:'round'}),
+        data.map((d,i)=> i%step===0? h('text',{key:'x'+i, x:x(i), y:H-8, textAnchor:'middle', fontSize:10, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, d.label):null),
+        data.map((d,i)=> h('rect',{key:'h'+i, x:x(i)-iw/n/2, y:P.t, width:Math.max(6,iw/n), height:ih, fill:'transparent', onMouseMove:(e)=>{ const rows=series.map((sr,si)=>[sr.name, this.fmtFull(sr.data[i].value)]).sort((a,b)=>parseInt(b[1].replace(/,/g,''))-parseInt(a[1].replace(/,/g,''))); rows.push(['total', this.fmtFull(totals[i])]); this.showTip(e,{title:d.label, rows, accent:'var(--accent)'}); } }))
+      ))
+    );
+  }
+  niceMax(m){ const p=Math.pow(10,Math.floor(Math.log10(m))); const n=m/p; const s= n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10; return Math.ceil(m/(s*p))*s*p; }
+
+  // ---------- committer activity matrix (all committers × bucket) ----------
+  authorMatrix(node){ const bs=this.buckets(); const authors=this.contributorsFor(node);
+    const rows=authors.map(a=>{ const seed=this.hash(node.path+'|'+a.author+'|'+this.state.metric+'|'+this.state.bucket); const rng=this.rng(seed); const ph=this.hash(a.author)%7; const n=bs.length; const w=[]; for(let i=0;i<n;i++){ const t=n>1?i/(n-1):0; w.push(Math.max(0.015,(0.5+0.8*t)*(1+0.45*Math.sin(t*6+ph))*(0.35+rng()))); } const sw=w.reduce((x,y)=>x+y,0)||1; return {author:a.author, total:a.value, cells:w.map(x=>a.value*x/sw)}; });
+    const max=Math.max(...rows.flatMap(r=>r.cells),0.0001); return {rows, buckets:bs, max};
+  }
+  committerMatrix(ctx, node){ const h=ctx.h; const {rows,buckets,max}=this.authorMatrix(node); const nb=buckets.length;
+    if(nb===0) return this.emptyState(ctx);
+    const Lw=ctx.narrow?94:154, Tw=56, gap=3, rowH=24, topH=18;
+    const avail=(ctx.pageW-(ctx.narrow?32:40))-Lw-Tw; const cellW=Math.max(this.state.bucket==='week'?9:26, avail/nb);
+    const W=Lw+nb*cellW+Tw; const H=topH+rows.length*(rowH+gap);
+    const step=Math.ceil(nb/(ctx.narrow?6:12));
+    return h('div',null,
+      h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W, height:H, style:{display:'block'}, onMouseLeave:()=>this.hideTip()},
+        buckets.map((b,c)=> c%step===0? h('text',{key:'t'+c, x:Lw+c*cellW+cellW/2, y:12, textAnchor:'middle', fontSize:9.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, b.label):null),
+        rows.map((r,ri)=>{ const y=topH+ri*(rowH+gap); return h('g',{key:r.author},
+          h('text',{x:0, y:y+rowH/2+4, fontSize:12, fill:'var(--text)', fontWeight:500}, this.truncate(r.author, Lw-8)),
+          r.cells.map((v,c)=> h('rect',{key:c, x:Lw+c*cellW+0.6, y, width:Math.max(1,cellW-1.2), height:rowH, rx:2.5, fill:'var(--accent)', fillOpacity:0.05+0.95*(v/max), onMouseMove:(e)=>this.showTip(e,{title:r.author+' · '+buckets[c].label, rows:[[this.metricLabel(), this.fmtFull(v)]], accent:'var(--accent)'}), onMouseLeave:()=>this.hideTip()})),
+          h('text',{x:W-4, y:y+rowH/2+4, textAnchor:'end', fontSize:11.5, fill:'var(--muted)', fontFamily:'IBM Plex Mono', fontWeight:500}, this.fmt(r.total))
+        ); })
+      )),
+      h('div',{style:{display:'flex', alignItems:'center', gap:8, marginTop:12, fontSize:11, color:'var(--muted)'}},
+        h('span',null,'Less'),
+        [0.1,0.3,0.55,0.8,1].map((o,i)=> h('span',{key:i, style:{width:13,height:13,borderRadius:3, background:'var(--accent)', opacity:o}})),
+        h('span',null,'More'),
+        h('span',{style:{marginLeft:'auto', fontFamily:"'IBM Plex Mono',monospace"}}, rows.length+' committers · per '+this.state.bucket+' · total →')
+      )
+    );
+  }
+
+  // ---------- zone activity matrix (zones × bucket) ----------
+  zoneMatrix(ctx){ const h=ctx.h; const m=this.state.metric; const zroot=this.zoneRoot(); const bs=this.buckets(); const nb=bs.length;
+    const zones=(zroot.children||[]).filter(z=>(z[m]||0)>0);
+    if(nb===0||zones.length===0) return this.emptyState(ctx);
+    const rows=zones.map(z=>({name:z.name, total:z[m]||0, color:this.PALETTE[(()=>{const names=this.state.zones.map(x=>x.name).concat(['Other']); const i=names.indexOf(z.name); return (i<0?0:i)%this.PALETTE.length;})()], cells:this.trendFor(z).map(d=>d.value)}));
+    const max=Math.max(...rows.flatMap(r=>r.cells),0.0001);
+    const Lw=ctx.narrow?94:154, Tw=56, gap=3, rowH=26, topH=18;
+    const avail=(ctx.pageW-(ctx.narrow?32:40))-Lw-Tw; const cellW=Math.max(this.state.bucket==='week'?9:26, avail/nb);
+    const W=Lw+nb*cellW+Tw; const H=topH+rows.length*(rowH+gap);
+    const step=Math.ceil(nb/(ctx.narrow?6:12));
+    return h('div',null,
+      h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W, height:H, style:{display:'block'}, onMouseLeave:()=>this.hideTip()},
+        bs.map((b,c)=> c%step===0? h('text',{key:'t'+c, x:Lw+c*cellW+cellW/2, y:12, textAnchor:'middle', fontSize:9.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, b.label):null),
+        rows.map((r,ri)=>{ const y=topH+ri*(rowH+gap); return h('g',{key:r.name},
+          h('circle',{cx:5, cy:y+rowH/2, r:4, fill:r.color}),
+          h('text',{x:15, y:y+rowH/2+4, fontSize:12, fill:'var(--text)', fontWeight:500}, this.truncate(r.name, Lw-22)),
+          r.cells.map((v,c)=> h('rect',{key:c, x:Lw+c*cellW+0.6, y, width:Math.max(1,cellW-1.2), height:rowH, rx:2.5, fill:r.color, fillOpacity:0.06+0.94*(v/max), onMouseMove:(e)=>this.showTip(e,{title:r.name+' · '+bs[c].label, rows:[[this.metricLabel(), this.fmtFull(v)]], accent:r.color}), onMouseLeave:()=>this.hideTip()})),
+          h('text',{x:W-4, y:y+rowH/2+4, textAnchor:'end', fontSize:11.5, fill:'var(--muted)', fontFamily:'IBM Plex Mono', fontWeight:500}, this.fmt(r.total))
+        ); })
+      )),
+      h('div',{style:{display:'flex', alignItems:'center', gap:8, marginTop:12, fontSize:11, color:'var(--muted)'}},
+        h('span',{style:{fontFamily:"'IBM Plex Mono',monospace"}}, rows.length+' zones · configure via Group by → Zone → Configure zones'),
+        h('span',{style:{marginLeft:'auto', fontFamily:"'IBM Plex Mono',monospace"}}, 'per '+this.state.bucket+' · total →')
+      )
+    );
+  }
+
+  // ---------- contribution mix (who works on what) ----------
+  authorMix(node){ const m=this.state.metric; const kids=(node.children||[]).filter(c=>(c[m]||0)>0);
+    const authors=this.contributorsFor(node);
+    const rows=authors.map(a=>{ const rng=this.rng(this.hash(a.author+'|'+node.path+'|mix|'+m));
+      let parts=kids.map(c=>({name:c.name, w:(c[m]||0)*Math.pow(0.12+rng(),2.2)}));
+      const sw=parts.reduce((s,p)=>s+p.w,0)||1;
+      return {author:a.author, total:a.value, parts:parts.map(p=>({name:p.name, value:a.value*p.w/sw}))};
+    });
+    return {rows, kids};
+  }
+  mixColor(name, idx, cnt){ if(this.state.drill.length===0) return this.PALETTE[this.rootIndexOf(name)%this.PALETTE.length];
+    const base=this.PALETTE[this.rootIndexOf(this.state.drill[0])%this.PALETTE.length]; const t=cnt>1? idx/(cnt-1):0; return this.shade(base, -0.3+t*0.62);
+  }
+  contributionMix(ctx, node){ const h=ctx.h; const {rows,kids}=this.authorMix(node);
+    if(kids.length===0||rows.length===0) return this.emptyState(ctx,'No sub-paths at this level');
+    return h('div',null,
+      h('div',{style:{display:'flex', gap:12, flexWrap:'wrap', marginBottom:14, fontSize:11.5, color:'var(--muted)'}},
+        kids.map((k,i)=> h('span',{key:k.name, style:{display:'inline-flex', alignItems:'center', gap:6}}, h('span',{style:{width:9,height:9,borderRadius:2,background:this.mixColor(k.name,i,kids.length)}}), k.name))
+      ),
+      h('div',{style:{display:'flex', flexDirection:'column', gap:9}},
+        rows.map(r=> h('div',{key:r.author, style:{display:'grid', gridTemplateColumns: ctx.narrow?'96px 1fr 46px':'134px 1fr 52px', alignItems:'center', gap:10}},
+          h('div',{style:{fontSize:12.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}, r.author),
+          h('div',{style:{display:'flex', height:20, borderRadius:5, overflow:'hidden', background:'var(--track)'}},
+            r.parts.map((p,i)=>{ const pct=r.total? p.value/r.total*100:0; return pct<0.4? null : h('div',{key:p.name, onMouseMove:(e)=>this.showTip(e,{title:r.author+' · '+p.name, rows:[[this.metricLabel(), this.fmtFull(p.value)],['share', pct.toFixed(1)+'%']], accent:this.mixColor(p.name,i,r.parts.length)}), onMouseLeave:()=>this.hideTip(), style:{width:pct+'%', background:this.mixColor(p.name,i,r.parts.length), borderRight:'1px solid var(--panel)', transition:'width .3s'}}); })
+          ),
+          h('div',{style:{fontSize:12, fontFamily:"'IBM Plex Mono',monospace", textAlign:'right', color:'var(--muted)'}}, this.fmt(r.total))
+        ))
+      )
+    );
+  }
+
+  // ---------- commit rhythm (punchcard heatmap) ----------
+  punchData(node){ const m=this.state.metric; const total=node[m]||1; const rng=this.rng(this.hash(node.path+'|'+m+'|punch'));
+    const grid=[]; let sum=0;
+    for(let d=0; d<7; d++){ const row=[]; const weekday=d<5; for(let hh=0; hh<24; hh++){ let w; if(hh>=9&&hh<=18) w=1; else if(hh>=7&&hh<=21) w=0.34; else w=0.04; if(!weekday) w*=(d===5?0.42:0.24); if(hh>=12&&hh<=13) w*=0.62; w*=(0.5+rng()); row.push(w); sum+=w; } grid.push(row); }
+    const max=Math.max(...grid.flat(),0.0001); return {grid,max,total,sum:sum||1};
+  }
+  punchcard(ctx, node){ const h=ctx.h; const {grid,max,total,sum}=this.punchData(node);
+    const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const W=Math.max(360, ctx.pageW-(ctx.narrow?32:40)); const P={l:36,r:6,t:6,b:22}; const cols=24, rows=7; const gap=3;
+    const cell=(W-P.l-P.r)/cols; const rh=Math.min(26, Math.max(14, cell)); const H=P.t+P.b+rows*rh+(rows-1)*gap;
+    return h('div',null,
+      h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W, height:H, style:{display:'block', maxWidth:'100%'}, onMouseLeave:()=>this.hideTip()},
+        days.map((dl,r)=> h('text',{key:'d'+r, x:P.l-8, y:P.t+r*(rh+gap)+rh/2+4, textAnchor:'end', fontSize:10.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, dl)),
+        grid.map((row,r)=> row.map((w,c)=>{ const op=0.05+0.95*(w/max); const val=w/sum*total; return h('rect',{key:r+'-'+c, x:P.l+c*cell+0.6, y:P.t+r*(rh+gap), width:Math.max(1,cell-1.2), height:rh, rx:3, fill:'var(--accent)', fillOpacity:op, onMouseMove:(e)=>this.showTip(e,{title:days[r]+' · '+String(c).padStart(2,'0')+':00', rows:[[this.metricLabel(), this.fmtFull(val)]], accent:'var(--accent)'}), onMouseLeave:()=>this.hideTip()}); })),
+        [0,3,6,9,12,15,18,21].map(hh=> h('text',{key:'h'+hh, x:P.l+hh*cell+cell/2, y:H-7, textAnchor:'middle', fontSize:9.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, hh))
+      )),
+      h('div',{style:{display:'flex', alignItems:'center', gap:8, marginTop:10, fontSize:11, color:'var(--muted)'}},
+        h('span',null,'Less'),
+        [0.1,0.3,0.55,0.8,1].map((o,i)=> h('span',{key:i, style:{width:13,height:13,borderRadius:3, background:'var(--accent)', opacity:o}})),
+        h('span',null,'More'),
+        h('span',{style:{marginLeft:'auto', fontFamily:"'IBM Plex Mono',monospace"}}, 'peak: weekday 10:00–17:00')
+      )
+    );
+  }
+
+  // ---------- code frequency (add / del) ----------
+  codeFreqData(node){ const bs=this.buckets(); if(bs.length===0) return []; const churn=node.churn||1; const rng=this.rng(this.hash(node.path+'|cf|'+this.state.bucket)); const n=bs.length; const w=[]; for(let i=0;i<n;i++){ const t=n>1?i/(n-1):0; w.push(Math.max(0.05,(0.4+0.9*t)*(1+0.3*Math.sin(t*8+n))*(0.6+rng()))); } const sw=w.reduce((a,b)=>a+b,0)||1; return bs.map((b,i)=>{ const base=churn*w[i]/sw; const dr=0.3+rng()*0.16; return {label:b.label, add:Math.round(base*(1-dr)), del:Math.round(base*dr)}; }); }
+  codeFreq(ctx, node){ const h=ctx.h; const data=this.codeFreqData(node); if(data.length===0) return this.emptyState(ctx);
+    const W=Math.max(280, ctx.narrow? ctx.pageW-32 : (ctx.pageW-16)/2 - 40); const H=236; const P={l:44,r:10,t:14,b:26}; const iw=W-P.l-P.r, ih=H-P.t-P.b; const mid=P.t+ih/2;
+    const max=Math.max(...data.flatMap(d=>[d.add,d.del]),1); const yMax=this.niceMax(max);
+    const x=i=>P.l+(data.length===1?iw/2:i/(data.length-1)*iw); const yUp=v=>mid-(v/yMax)*(ih/2); const yDn=v=>mid+(v/yMax)*(ih/2);
+    const aLine=data.map((d,i)=>`${i===0?'M':'L'}${x(i).toFixed(1)} ${yUp(d.add).toFixed(1)}`).join(' ');
+    const dLine=data.map((d,i)=>`${i===0?'M':'L'}${x(i).toFixed(1)} ${yDn(d.del).toFixed(1)}`).join(' ');
+    const aArea=`${aLine} L${x(data.length-1)} ${mid} L${x(0)} ${mid} Z`; const dArea=`${dLine} L${x(data.length-1)} ${mid} L${x(0)} ${mid} Z`;
+    const step=Math.ceil(data.length/(ctx.narrow?5:8));
+    return h('div',null,
+      h('div',{style:{display:'flex', gap:16, marginBottom:10, fontSize:11.5, color:'var(--muted)'}}, this.legendDot('var(--green)','Additions'), this.legendDot('var(--red)','Deletions')),
+      h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W, height:H, style:{display:'block', maxWidth:'100%'}, onMouseLeave:()=>this.hideTip()},
+        h('defs',null, h('linearGradient',{id:'cfa'+node.path.length,x1:0,y1:0,x2:0,y2:1},h('stop',{offset:'0%',stopColor:'var(--green)',stopOpacity:0.32}),h('stop',{offset:'100%',stopColor:'var(--green)',stopOpacity:0.02})), h('linearGradient',{id:'cfd'+node.path.length,x1:0,y1:0,x2:0,y2:1},h('stop',{offset:'0%',stopColor:'var(--red)',stopOpacity:0.02}),h('stop',{offset:'100%',stopColor:'var(--red)',stopOpacity:0.32}))),
+        h('text',{x:P.l-8,y:P.t+10,textAnchor:'end',fontSize:10,fill:'var(--faint)',fontFamily:'IBM Plex Mono'}, '+'+this.fmt(yMax)),
+        h('text',{x:P.l-8,y:H-P.b,textAnchor:'end',fontSize:10,fill:'var(--faint)',fontFamily:'IBM Plex Mono'}, '−'+this.fmt(yMax)),
+        h('line',{x1:P.l,x2:W-P.r,y1:mid,y2:mid,stroke:'var(--border2)'}),
+        h('path',{d:aArea, fill:'url(#cfa'+node.path.length+')'}), h('path',{d:dArea, fill:'url(#cfd'+node.path.length+')'}),
+        h('path',{d:aLine, fill:'none', stroke:'var(--green)', strokeWidth:2, strokeLinejoin:'round'}), h('path',{d:dLine, fill:'none', stroke:'var(--red)', strokeWidth:2, strokeLinejoin:'round'}),
+        data.map((d,i)=> h('rect',{key:'h'+i, x:x(i)-iw/data.length/2, y:P.t, width:Math.max(6,iw/data.length), height:ih, fill:'transparent', onMouseMove:(e)=>this.showTip(e,{title:d.label, rows:[['additions','+'+this.fmtFull(d.add)],['deletions','−'+this.fmtFull(d.del)]], accent:'var(--green)'})})),
+        data.map((d,i)=> i%step===0? h('text',{key:'x'+i, x:x(i), y:H-8, textAnchor:'middle', fontSize:10, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, d.label):null)
+      ))
+    );
+  }
+
+  // ---------- top files ----------
+  collectLeaves(node){ if(node.is_leaf) return [node]; let out=[]; (node.children||[]).forEach(c=>out=out.concat(this.collectLeaves(c))); return out; }
+  topFiles(ctx, node){ const h=ctx.h; const m=this.state.metric; const leaves=this.collectLeaves(node).filter(l=>l[m]>0).sort((a,b)=>b[m]-a[m]).slice(0,8);
+    if(leaves.length===0) return this.emptyState(ctx,'No files in this selection');
+    const max=Math.max(...leaves.map(l=>l[m]),1); const baseColor=this.state.drill.length? this.PALETTE[this.repoIndex(this.state.drill[0])]:'var(--accent)';
+    return h('div',{style:{display:'flex', flexDirection:'column', gap:10, paddingTop:2}},
+      leaves.map((l,i)=>{ const parts=l.path.split('/'); const name=parts.pop(); const dir=parts.join('/')+'/'; return h('div',{key:l.path, onMouseMove:(e)=>this.showTip(e,{title:l.path, rows:[[this.metricLabel(),this.fmtFull(l[m])],['commits',this.fmtFull(l.commits)]], accent:baseColor}), onMouseLeave:()=>this.hideTip(), style:{cursor:'default'}},
+        h('div',{style:{display:'flex', justifyContent:'space-between', gap:10, marginBottom:5, alignItems:'baseline'}},
+          h('div',{style:{minWidth:0, fontSize:12.5}}, h('span',{style:{color:'var(--faint)', fontFamily:"'IBM Plex Mono',monospace", fontSize:11}}, dir), h('span',{style:{fontWeight:600, fontFamily:"'IBM Plex Mono',monospace"}}, name)),
+          h('span',{style:{fontSize:12, fontFamily:"'IBM Plex Mono',monospace", color:'var(--muted)', flexShrink:0}}, this.fmt(l[m]))
+        ),
+        h('div',{style:{height:7, background:'var(--track)', borderRadius:4, overflow:'hidden'}}, h('div',{style:{height:'100%', width:(l[m]/max*100)+'%', background:baseColor, borderRadius:4, transition:'width .4s'}}))
+      ); })
+    );
+  }
+
+  // ================= TRACKERS PAGE =================
+  trackersPage(ctx){ const h=ctx.h;
+    const empty=this.state.trackers.length===0;
+    return h('div',{style:{display:'flex', flexDirection:'column', gap:16}},
+      // tracker select row
+      h('div',{style:{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}},
+        h('span',{style:{fontSize:12.5, color:'var(--muted)', fontWeight:600}}, 'Trackers'),
+        this.TRACKERS.map(t=> this.chip(ctx, t)),
+        h('span',{style:{marginLeft:'auto', fontSize:12, color:'var(--faint)', fontFamily:"'IBM Plex Mono',monospace"}}, this.state.trackers.length+' of 3 selected')
+      ),
+      this.panel(ctx, {title:'Backlog & throughput', sub:'open artifacts over time · opened / closed per '+this.state.bucket}, empty? this.emptyState(ctx,'Select at least one tracker'): this.backlog(ctx)),
+      this.panel(ctx, {title:'Open tickets by zone', sub:'stacked by tracker · zones from Git activity config'}, empty? this.emptyState(ctx,'Select at least one tracker'): this.zoneTicketsPanel(ctx)),
+      h('div',{style:{display:'grid', gridTemplateColumns: ctx.narrow?'1fr': 'minmax(0,1fr) minmax(0,1fr)', gap:16}},
+        this.panel(ctx, {title:'Cycle time & age', sub:'median days · per assignee', min:0}, empty? this.emptyState(ctx,'No selection'): this.cycleBars(ctx)),
+        this.panel(ctx, {title:'Per-assignee detail', sub:'open · closed · medians', min:0}, empty? this.emptyState(ctx,'No selection'): this.cycleTable(ctx))
+      ),
+      this.panel(ctx, {title:'Open ticket age', sub:'currently-open artifacts by age · oldest first', right: h('span',{style:{fontSize:12, color:'var(--muted)', fontFamily:"'IBM Plex Mono',monospace"}}, this.openTickets().length+' open')}, empty? this.emptyState(ctx,'Select at least one tracker'): this.openAgePanel(ctx)),
+      this.panel(ctx, {title:'Recent artifacts', sub:'cross-linked to commits · click to inspect'}, this.artifactsList(ctx))
+    );
+  }
+  chip(ctx, t){ const h=ctx.h; const on=this.state.trackers.includes(t.id);
+    return h('button',{key:t.id, onClick:()=>{ let s=this.state.trackers.slice(); if(on) s=s.filter(x=>x!==t.id); else s.push(t.id); this.set({trackers:s}); }, style:{cursor:'pointer', display:'inline-flex', alignItems:'center', gap:7, height:32, padding:'0 12px', borderRadius:8, border:'1px solid '+(on?'var(--accent)':'var(--border)'), background:on?'var(--accentweak)':'var(--panel2)', color:on?'var(--text)':'var(--muted)', fontFamily:'inherit', fontSize:12.5, fontWeight:600}},
+      h('span',{style:{width:8,height:8,borderRadius:2, background:on?'var(--accent)':'var(--faint)'}}),
+      t.name,
+      h('span',{style:{fontSize:10.5, color:'var(--faint)', fontFamily:"'IBM Plex Mono',monospace"}}, '#'+t.tuleap_tracker_id)
+    );
+  }
+
+  backlog(ctx){ const h=ctx.h; const data=this.backlogSeries();
+    if(data.length===0) return this.emptyState(ctx,'No activity in this selection');
+    const W=Math.max(320, ctx.pageW-(ctx.narrow?32:40)); const H=ctx.narrow?320:400; const P={l:42,r:46,t:18,b:34};
+    const iw=W-P.l-P.r, ih=H-P.t-P.b;
+    const barBottom=P.t+ih;
+    const maxThru=Math.max(...data.flatMap(d=>[d.opened,d.closed]),1); const thruMax=this.niceMax(maxThru);
+    const thruH = ih*0.46; // bottom region for bars
+    const maxOpen=Math.max(...data.map(d=>d.open_count),1); const openMax=this.niceMax(maxOpen);
+    const bandTop=P.t; const bandH=ih-thruH-6; // line region on top
+    const x=i=> P.l + (data.length===1?iw/2 : i/(data.length-1)*iw);
+    const yLine=v=> bandTop + bandH - (v/openMax)*bandH;
+    const zero=barBottom - thruH; // baseline centered? we put opened up, closed down from zero at bottom region
+    const yBarTop = zero; // opened bars grow up from zero(=top of bar region)... actually design: bars from bottom
+    const barBase=barBottom;
+    const bw=Math.min(22, iw/data.length*0.64);
+    const line=data.map((d,i)=>`${i===0?'M':'L'}${x(i).toFixed(1)} ${yLine(d.open_count).toFixed(1)}`).join(' ');
+    const areaP=`${line} L${x(data.length-1).toFixed(1)} ${(bandTop+bandH).toFixed(1)} L${x(0).toFixed(1)} ${(bandTop+bandH).toFixed(1)} Z`;
+    const step=Math.ceil(data.length/(ctx.narrow?5:9));
+    const yl=[0,0.5,1].map(f=>Math.round(openMax*f));
+    return h('div',null,
+      h('div',{style:{display:'flex', gap:16, marginBottom:12, flexWrap:'wrap', fontSize:11.5, color:'var(--muted)'}},
+        this.legendDot('var(--accent)','Open backlog','line'), this.legendDot('var(--green)','Opened'), this.legendDot('var(--red)','Closed')
+      ),
+      h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W,height:H, style:{display:'block', maxWidth:'100%'}, onMouseLeave:()=>this.hideTip()},
+        h('defs',null, h('linearGradient',{id:'bg1', x1:0,y1:0,x2:0,y2:1}, h('stop',{offset:'0%',stopColor:'var(--accent)',stopOpacity:0.22}), h('stop',{offset:'100%',stopColor:'var(--accent)',stopOpacity:0}))),
+        // grid for line
+        yl.map((v,i)=> h('g',{key:'g'+i}, h('line',{x1:P.l,x2:W-P.r,y1:yLine(v),y2:yLine(v),stroke:'var(--grid)'}), h('text',{x:P.l-8,y:yLine(v)+4,textAnchor:'end',fontSize:10.5,fill:'var(--accent)',fontFamily:'IBM Plex Mono',opacity:0.8}, v)) ),
+        // separator + throughput baseline
+        h('line',{x1:P.l,x2:W-P.r,y1:barBase,y2:barBase,stroke:'var(--border2)'}),
+        h('text',{x:W-P.r+6, y:barBase+4, fontSize:10.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, '0'),
+        h('text',{x:W-P.r+6, y:barBase-thruH+4, fontSize:10.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, thruMax),
+        // bars
+        data.map((d,i)=>{ const cx=x(i); const ho=d.opened/thruMax*thruH; const hc=d.closed/thruMax*thruH; return h('g',{key:'b'+i, onMouseMove:(e)=>this.showTip(e,{title:d.label, rows:[['open backlog',this.fmtFull(d.open_count)],['opened','+'+d.opened],['closed','−'+d.closed],['net',(d.opened-d.closed>=0?'+':'')+(d.opened-d.closed)]], accent:'var(--accent)'}), onMouseLeave:()=>this.hideTip()},
+          h('rect',{x:cx-bw/2-0.5, y:barBase-thruH, width:bw+1, height:thruH, fill:'transparent'}),
+          h('rect',{x:cx-bw/2, y:barBase-ho, width:bw/2-0.5, height:ho, fill:'var(--green)', rx:1.5}),
+          h('rect',{x:cx+0.5, y:barBase-hc, width:bw/2-0.5, height:hc, fill:'var(--red)', rx:1.5})
+        ); }),
+        // line + area
+        h('path',{d:areaP, fill:'url(#bg1)'}),
+        h('path',{d:line, fill:'none', stroke:'var(--accent)', strokeWidth:2.4, strokeLinejoin:'round', strokeLinecap:'round'}),
+        data.map((d,i)=> i%step===0? h('circle',{key:'lc'+i, cx:x(i), cy:yLine(d.open_count), r:2.6, fill:'var(--accent)', stroke:'var(--panel)', strokeWidth:1.5}):null),
+        // x labels
+        data.map((d,i)=> i%step===0? h('text',{key:'x'+i, x:x(i), y:H-10, textAnchor:'middle', fontSize:10, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, d.label):null)
+      ))
+    );
+  }
+  legendDot(color, label, shape){ const h=this.h.bind(this); return h('span',{style:{display:'inline-flex', alignItems:'center', gap:6}}, shape==='line'? h('span',{style:{width:14,height:2.5,borderRadius:2,background:color}}) : h('span',{style:{width:9,height:9,borderRadius:2,background:color}}), label); }
+
+  cycleBars(ctx){ const h=ctx.h; const rows=this.cycleRows(); const max=Math.max(...rows.flatMap(r=>[r.median_days_to_close,r.median_open_age_days]),1);
+    return h('div',null,
+      h('div',{style:{display:'flex', gap:16, marginBottom:14, fontSize:11.5, color:'var(--muted)'}}, this.legendDot('var(--accent)','Median close (d)'), this.legendDot('#e0a34e','Median age of open (d)')),
+      h('div',{style:{display:'flex', flexDirection:'column', gap:11}},
+        rows.map(r=> h('div',{key:r.assignee, onMouseMove:(e)=>this.showTip(e,{title:r.assignee, rows:[['median close',r.median_days_to_close+' d'],['median age',r.median_open_age_days+' d'],['open',r.open_count],['closed',r.closed_count]], accent:'var(--accent)'}), onMouseLeave:()=>this.hideTip(), style:{cursor:'default'}},
+          h('div',{style:{fontSize:12, fontWeight:500, marginBottom:5}}, r.assignee),
+          h('div',{style:{display:'flex', flexDirection:'column', gap:4}},
+            this.miniBar(r.median_days_to_close, max, 'var(--accent)'),
+            this.miniBar(r.median_open_age_days, max, '#e0a34e')
+          )
+        ))
+      )
+    );
+  }
+  miniBar(v,max,color){ const h=this.h.bind(this); return h('div',{style:{display:'flex', alignItems:'center', gap:8}},
+    h('div',{style:{flex:1, height:8, background:'var(--track)', borderRadius:4, overflow:'hidden'}}, h('div',{style:{height:'100%', width:(v/max*100)+'%', background:color, borderRadius:4, transition:'width .4s'}})),
+    h('div',{style:{width:34, fontSize:11.5, fontFamily:"'IBM Plex Mono',monospace", color:'var(--muted)', textAlign:'right'}}, v+'d')
+  ); }
+
+  cycleTable(ctx){ const h=ctx.h; const rows=this.cycleRows().slice().sort((a,b)=>b.closed_count-a.closed_count);
+    const th=(s,a)=> h('th',{style:{textAlign:a||'right', padding:'8px 10px', fontSize:10.5, textTransform:'uppercase', letterSpacing:0.5, color:'var(--faint)', fontWeight:600, position:'sticky', top:0, background:'var(--panel)', borderBottom:'1px solid var(--border)'}}, s);
+    const td=(s,a,mono,color)=> h('td',{style:{padding:'9px 10px', fontSize:12.5, textAlign:a||'right', fontFamily:mono?"'IBM Plex Mono',monospace":'inherit', color:color||'var(--text)', whiteSpace:'nowrap'}}, s);
+    return h('div',{style:{overflowX:'auto', maxHeight:352, overflowY:'auto', margin:'-4px -6px', borderRadius:8}},
+      h('table',{style:{width:'100%', borderCollapse:'collapse', minWidth:420}},
+        h('thead',null, h('tr',null, th('Assignee','left'), th('Open'), th('Closed'), th('Close (d)'), th('Age (d)'))),
+        h('tbody',null, rows.map((r,i)=> h('tr',{key:r.assignee, style:{borderBottom:'1px solid var(--border)'}, onMouseEnter:e=>e.currentTarget.style.background='var(--hover)', onMouseLeave:e=>e.currentTarget.style.background='transparent'},
+          td(r.assignee,'left', false), td(r.open_count,'right',true,'var(--muted)'), td(r.closed_count,'right',true), td(r.median_days_to_close,'right',true,'var(--accent)'), td(r.median_open_age_days,'right',true,'#e0a34e')
+        )))
+      )
+    );
+  }
+
+  artifactsList(ctx){ const h=ctx.h;
+    const stColor=(s)=>({'In Progress':'var(--accent)','In Review':'#b07cf0','Doing':'#e0a34e','Confirmed':'var(--red)'})[s]||'var(--muted)';
+    return h('div',{style:{display:'flex', flexDirection:'column', gap:1}},
+      this.ARTIFACTS.map(a=> h('button',{key:a.id, onClick:()=>this.set({drawer:{type:'artifact', id:a.id}}), style:{display:'flex', alignItems:'center', gap:14, padding:'12px 12px', border:'none', borderRadius:10, background:'transparent', cursor:'pointer', textAlign:'left', color:'var(--text)', fontFamily:'inherit'}, onMouseEnter:e=>e.currentTarget.style.background='var(--hover)', onMouseLeave:e=>e.currentTarget.style.background='transparent'},
+        h('span',{style:{fontFamily:"'IBM Plex Mono',monospace", fontSize:11.5, color:'var(--accent)', flexShrink:0, width:78}}, a.ref),
+        h('div',{style:{flex:1, minWidth:0}},
+          h('div',{style:{fontSize:13, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}, a.title),
+          h('div',{style:{fontSize:11.5, color:'var(--faint)', marginTop:2}}, a.assignee)
+        ),
+        h('span',{style:{display:'inline-flex', alignItems:'center', gap:5, fontSize:11, color:stColor(a.status), fontWeight:600, flexShrink:0}}, h('span',{style:{width:6,height:6,borderRadius:'50%',background:stColor(a.status)}}), a.status),
+        h('span',{style:{display:'inline-flex', alignItems:'center', gap:5, fontSize:11.5, color:'var(--muted)', fontFamily:"'IBM Plex Mono',monospace", flexShrink:0}}, h('svg',{width:12,height:12,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8'})), a.commits.length),
+        h('svg',{width:15,height:15,viewBox:'0 0 24 24',fill:'none',stroke:'var(--faint)',strokeWidth:2, style:{flexShrink:0}},h('path',{d:'M9 6l6 6-6 6'}))
+      ))
+    );
+  }
+
+  // ---------- tickets by zone ----------
+  get TRACKER_COLORS(){ return {bugs:'#ec6f9e', tasks:'#4cc0e0', stories:'#b07cf0'}; }
+  zoneTickets(){ const zroot=this.zoneRoot(); const sel=this.state.trackers;
+    return (zroot.children||[]).map(z=>{ const rng=this.rng(this.hash(z.name+'|ztick')); const size=Math.sqrt(z.commits||1);
+      const per=this.TRACKERS.map(t=>{ const open=Math.max(1,Math.round(size*0.55*(0.35+rng())*t.w*3)); const closed=Math.round(open*(2.2+rng()*3)); return {id:t.id, name:t.name, open, closed}; }).filter(p=>sel.includes(p.id));
+      return {zone:z.name, per, open:per.reduce((s,p)=>s+p.open,0), closed:per.reduce((s,p)=>s+p.closed,0)};
+    }).filter(r=>r.open>0).sort((a,b)=>b.open-a.open);
+  }
+  zoneTicketsPanel(ctx){ const h=ctx.h; const rows=this.zoneTickets();
+    if(rows.length===0) return this.emptyState(ctx,'No tickets in this selection');
+    const W=Math.max(340, ctx.pageW-(ctx.narrow?32:40)); const H=ctx.narrow?240:280; const P={l:36,r:10,t:20,b:30};
+    const iw=W-P.l-P.r, ih=H-P.t-P.b; const n=rows.length;
+    const yMax=this.niceMax(Math.max(...rows.map(r=>r.open),1));
+    const y=v=>P.t+ih-(v/yMax)*ih;
+    const slot=iw/n; const bw=Math.min(66, slot*0.58);
+    const ticks=4; const yt=[]; for(let i=0;i<=ticks;i++) yt.push(Math.round(yMax*i/ticks));
+    const zi=(name)=>{ const names=this.state.zones.map(x=>x.name).concat(['Other']); const i=names.indexOf(name); return (i<0?0:i)%this.PALETTE.length; };
+    return h('div',null,
+      h('div',{style:{display:'flex', gap:14, marginBottom:10, flexWrap:'wrap', fontSize:11.5, color:'var(--muted)'}},
+        this.TRACKERS.filter(t=>this.state.trackers.includes(t.id)).map(t=> this.legendDot(this.TRACKER_COLORS[t.id], t.name))
+      ),
+      h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W, height:H, style:{display:'block', maxWidth:'100%'}, onMouseLeave:()=>this.hideTip()},
+        yt.map((v,i)=> h('g',{key:'y'+i}, h('line',{x1:P.l,x2:W-P.r,y1:y(v),y2:y(v),stroke:'var(--grid)'}), h('text',{x:P.l-8,y:y(v)+4,textAnchor:'end',fontSize:10.5,fill:'var(--faint)',fontFamily:'IBM Plex Mono'}, v))),
+        rows.map((r,i)=>{ const cx=P.l+slot*i+slot/2; let acc=0;
+          return h('g',{key:r.zone, onMouseMove:(e)=>this.showTip(e,{title:r.zone, rows:[...r.per.map(p=>[p.name+' open', p.open]), ['closed (all)', this.fmtFull(r.closed)]], accent:this.PALETTE[zi(r.zone)]}), onMouseLeave:()=>this.hideTip()},
+            h('rect',{x:cx-slot/2+2, y:P.t, width:slot-4, height:ih, fill:'transparent'}),
+            r.per.map(p=>{ const hgt=p.open/yMax*ih; const seg=h('rect',{key:p.id, x:cx-bw/2, y:y(acc+p.open), width:bw, height:Math.max(1,hgt), fill:this.TRACKER_COLORS[p.id], rx:2}); acc+=p.open; return seg; }),
+            h('text',{x:cx, y:y(r.open)-7, textAnchor:'middle', fontSize:11.5, fontWeight:600, fill:'var(--text)', fontFamily:'IBM Plex Mono'}, r.open),
+            h('circle',{cx:cx-this.truncate(r.zone, slot-8).length*3.1-8, cy:H-11, r:3.5, fill:this.PALETTE[zi(r.zone)]}),
+            h('text',{x:cx, y:H-7, textAnchor:'middle', fontSize:10.5, fill:'var(--muted)', fontFamily:'IBM Plex Mono'}, this.truncate(r.zone, slot-8))
+          );
+        })
+      ))
+    );
+  }
+
+  // ---------- open ticket age ----------
+  get OPEN_TICKETS(){ return [
+    {ref:'bug #4821', trk:'bugs', title:'UART RX overrun under sustained 921600 baud', status:'In Progress', assignee:'Priya Nadkarni', age:12, link:'A1'},
+    {ref:'story #2103', trk:'stories', title:'Batch ingest links commits to Tuleap artifacts', status:'In Review', assignee:'Diego Fuentes', age:31, link:'A2'},
+    {ref:'task #7740', trk:'tasks', title:'Add DMA double-buffer to reduce ISR load', status:'Doing', assignee:'Marek Kowalski', age:6, link:'A3'},
+    {ref:'bug #4790', trk:'bugs', title:'Bootloader CRC mismatch on RISC-V target', status:'Confirmed', assignee:'Lena Fischer', age:24, link:'A4'},
+    {ref:'bug #4655', trk:'bugs', title:'I2C bus lockup after sensor hot-plug', status:'Confirmed', assignee:'Sam Okafor', age:58},
+    {ref:'bug #4703', trk:'bugs', title:'Telemetry packet drop under sustained load', status:'New', assignee:'Yuki Tanaka', age:44},
+    {ref:'task #7712', trk:'tasks', title:'Migrate store queries to prepared statements', status:'Todo', assignee:'Ravi Menon', age:73},
+    {ref:'task #7698', trk:'tasks', title:'Add flash-monitor retry backoff', status:'Review', assignee:'Tom Byrne', age:19},
+    {ref:'story #2088', trk:'stories', title:'Web console dark-mode design tokens', status:'Ready', assignee:'Aisha Rahman', age:96},
+    {ref:'story #2071', trk:'stories', title:'Per-repo access scoping for the console', status:'Backlog', assignee:'Diego Fuentes', age:131},
+    {ref:'bug #4520', trk:'bugs', title:'Bootloader hangs on brown-out reset', status:'Confirmed', assignee:'Lena Fischer', age:118},
+    {ref:'task #7655', trk:'tasks', title:'CI: cache firmware toolchain between runs', status:'Doing', assignee:'Marek Kowalski', age:9},
+    {ref:'bug #4744', trk:'bugs', title:'UART parity errors at 3 Mbaud', status:'New', assignee:'Priya Nadkarni', age:38},
+    {ref:'story #2095', trk:'stories', title:'Artifact ↔ commit graph view', status:'In Progress', assignee:'Sam Okafor', age:27}
+  ]; }
+  ageBand(age){ if(age<=7) return {label:'≤ 7d', color:'var(--green)'}; if(age<=30) return {label:'8–30d', color:'var(--accent)'}; if(age<=90) return {label:'31–90d', color:'#e0a34e'}; return {label:'> 90d', color:'var(--red)'}; }
+  openTickets(){ return this.OPEN_TICKETS.filter(t=>this.state.trackers.includes(t.trk)).sort((a,b)=>b.age-a.age); }
+
+  openAgePanel(ctx){ const h=ctx.h; const tix=this.openTickets();
+    if(tix.length===0) return this.emptyState(ctx,'No open tickets in this selection');
+    const bands=[{k:'≤ 7d',lo:0,hi:7,color:'var(--green)'},{k:'8–30d',lo:8,hi:30,color:'var(--accent)'},{k:'31–90d',lo:31,hi:90,color:'#e0a34e'},{k:'> 90d',lo:91,hi:1e9,color:'var(--red)'}];
+    const counts=bands.map(b=>({...b, n:tix.filter(t=>t.age>=b.lo&&t.age<=b.hi).length}));
+    const total=tix.length; const maxAge=Math.max(...tix.map(t=>t.age),1);
+    const median=(()=>{ const a=tix.map(t=>t.age).sort((x,y)=>x-y); const m=a.length; return m%2? a[(m-1)/2] : Math.round((a[m/2-1]+a[m/2])/2); })();
+    const stColor=(s)=>({'In Progress':'var(--accent)','In Review':'#b07cf0','Doing':'#e0a34e','Confirmed':'var(--red)','New':'var(--red)','Ready':'var(--green)','Review':'#b07cf0','Todo':'var(--muted)','Backlog':'var(--muted)'})[s]||'var(--muted)';
+    return h('div',null,
+      // summary strip
+      h('div',{style:{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:10, marginBottom:16}},
+        h('div',{style:{padding:'12px 14px', background:'var(--panel2)', border:'1px solid var(--border)', borderRadius:12}},
+          h('div',{style:{fontSize:11, color:'var(--faint)', textTransform:'uppercase', letterSpacing:0.5, fontWeight:600}}, 'Open'),
+          h('div',{style:{fontSize:22, fontWeight:600, fontFamily:"'IBM Plex Mono',monospace", marginTop:3}}, total),
+          h('div',{style:{fontSize:11.5, color:'var(--muted)', marginTop:1}}, 'median age '+median+'d')
+        ),
+        counts.map(c=> h('div',{key:c.k, style:{padding:'12px 14px', background:'var(--panel2)', border:'1px solid var(--border)', borderRadius:12}},
+          h('div',{style:{display:'flex', alignItems:'center', gap:6, fontSize:11, color:'var(--muted)', fontWeight:600}}, h('span',{style:{width:8,height:8,borderRadius:2,background:c.color}}), c.k),
+          h('div',{style:{fontSize:22, fontWeight:600, fontFamily:"'IBM Plex Mono',monospace", marginTop:3}}, c.n),
+          h('div',{style:{height:4, borderRadius:2, background:'var(--track)', marginTop:8, overflow:'hidden'}}, h('div',{style:{height:'100%', width:(total?c.n/total*100:0)+'%', background:c.color, borderRadius:2}}))
+        ))
+      ),
+      // histogram
+      this.ageHistogram(ctx, tix, median),
+      // list
+      h('div',{style:{display:'flex', flexDirection:'column', gap:1}},
+        tix.map((t,i)=>{ const band=this.ageBand(t.age); const clickable=!!t.link;
+          return h('div',{key:i, onClick:()=> clickable && this.set({drawer:{type:'artifact', id:t.link}}), style:{display:'grid', gridTemplateColumns: ctx.narrow?'70px 1fr 96px':'82px 1fr 130px 150px 96px', alignItems:'center', gap:12, padding:'11px 12px', borderRadius:10, cursor:clickable?'pointer':'default'}, onMouseEnter:e=>e.currentTarget.style.background='var(--hover)', onMouseLeave:e=>e.currentTarget.style.background='transparent'},
+            h('span',{style:{fontFamily:"'IBM Plex Mono',monospace", fontSize:11.5, color:clickable?'var(--accent)':'var(--muted)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}, t.ref),
+            h('div',{style:{minWidth:0}}, h('div',{style:{fontSize:13, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}, t.title), ctx.narrow? h('div',{style:{fontSize:11.5, color:'var(--faint)', marginTop:2}}, t.assignee):null),
+            !ctx.narrow? h('span',{style:{display:'inline-flex', alignItems:'center', gap:6, fontSize:11.5, color:stColor(t.status), fontWeight:600}}, h('span',{style:{width:6,height:6,borderRadius:'50%',background:stColor(t.status)}}), t.status):null,
+            !ctx.narrow? h('span',{style:{fontSize:12, color:'var(--muted)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}, t.assignee):null,
+            h('div',{style:{display:'flex', alignItems:'center', gap:8}},
+              h('div',{style:{flex:1, height:7, background:'var(--track)', borderRadius:4, overflow:'hidden'}}, h('div',{style:{height:'100%', width:(t.age/maxAge*100)+'%', background:band.color, borderRadius:4}})),
+              h('span',{style:{fontSize:12, fontFamily:"'IBM Plex Mono',monospace", color:'var(--muted)', width:34, textAlign:'right'}}, t.age+'d')
+            )
+          );
+        })
+      )
+    );
+  }
+
+  ageHistogram(ctx, tix, median){ const h=ctx.h;
+    const bin=15; const maxAge=Math.max(...tix.map(t=>t.age),1); const nb=Math.max(1,Math.ceil((maxAge+1)/bin));
+    const bins=[]; for(let i=0;i<nb;i++) bins.push({lo:i*bin, hi:i*bin+bin-1, n:0});
+    tix.forEach(t=>{ const i=Math.min(nb-1,Math.floor(t.age/bin)); bins[i].n++; });
+    const W=Math.max(320, ctx.pageW-(ctx.narrow?32:40)); const H=214; const P={l:30,r:12,t:16,b:36};
+    const iw=W-P.l-P.r, ih=H-P.t-P.b; const span=nb*bin;
+    const maxN=Math.max(...bins.map(b=>b.n),1); const steps=Math.min(maxN,4); const stepv=Math.ceil(maxN/steps); const yMax=stepv*steps;
+    const bw=iw/nb; const gap=Math.min(6,bw*0.16);
+    const x=i=>P.l+i*bw; const y=v=>P.t+ih-(v/yMax)*ih;
+    const yt=[]; for(let v=0; v<=yMax; v+=stepv) yt.push(v);
+    const medX=P.l+(Math.min(median,span)/span)*iw;
+    return h('div',{style:{margin:'2px 0 18px'}},
+      h('div',{style:{fontSize:11.5, color:'var(--muted)', marginBottom:6, fontFamily:"'IBM Plex Mono',monospace"}}, 'distribution of open-ticket age · 15-day bins'),
+      h('div',{style:{width:'100%', overflowX:'auto'}}, h('svg',{width:W, height:H, style:{display:'block', maxWidth:'100%'}, onMouseLeave:()=>this.hideTip()},
+        yt.map((v,i)=> h('g',{key:'y'+i}, h('line',{x1:P.l, x2:W-P.r, y1:y(v), y2:y(v), stroke:'var(--grid)'}), h('text',{x:P.l-7, y:y(v)+4, textAnchor:'end', fontSize:10.5, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, v))),
+        bins.map((b,i)=>{ const band=this.ageBand(b.lo+bin/2); const bh=b.n/yMax*ih; return h('g',{key:'b'+i, onMouseMove:(e)=>this.showTip(e,{title:b.lo+'–'+(i===nb-1?maxAge:b.hi)+' days', rows:[['tickets', b.n],['share', (b.n/tix.length*100).toFixed(0)+'%']], accent:band.color}), onMouseLeave:()=>this.hideTip()},
+          h('rect',{x:x(i), y:P.t, width:bw, height:ih, fill:'transparent'}),
+          b.n>0? h('rect',{x:x(i)+gap/2, y:y(b.n), width:Math.max(1,bw-gap), height:Math.max(0,bh), rx:4, fill:band.color, fillOpacity:0.9}) : null,
+          b.n>0? h('text',{x:x(i)+bw/2, y:y(b.n)-6, textAnchor:'middle', fontSize:11, fontWeight:600, fill:'var(--text)', fontFamily:'IBM Plex Mono'}, b.n) : null,
+          h('text',{x:x(i), y:H-12, textAnchor:'middle', fontSize:10, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, b.lo)
+        ); }),
+        h('text',{x:x(nb), y:H-12, textAnchor:'middle', fontSize:10, fill:'var(--faint)', fontFamily:'IBM Plex Mono'}, span),
+        // median marker
+        h('line',{x1:medX, x2:medX, y1:P.t-2, y2:P.t+ih, stroke:'var(--text)', strokeWidth:1.4, strokeDasharray:'3 3', opacity:0.55}),
+        h('g',null, h('rect',{x:medX-30, y:P.t-13, width:60, height:15, rx:4, fill:'var(--text)', opacity:0.9}), h('text',{x:medX, y:P.t-2, textAnchor:'middle', fontSize:10, fontWeight:600, fill:'var(--panel)', fontFamily:'IBM Plex Mono'}, 'med '+median+'d'))
+      ))
+    );
+  }
+
+  // ---------- drawer (cross-links) ----------
+  drawer(ctx){ const h=ctx.h; const d=this.state.drawer; const close=()=>this.set({drawer:null});
+    let body;
+    if(d.type==='artifact'){ const a=this.ARTIFACTS.find(x=>x.id===d.id); body=this.artifactDrawer(ctx,a); }
+    else { const c=this.COMMITS[d.id]; body=this.commitDrawer(ctx,c,d.id); }
+    return h('div',{style:{position:'fixed', inset:0, zIndex:60, display:'flex', justifyContent:'flex-end'}},
+      h('div',{onClick:close, style:{position:'absolute', inset:0, background:'rgba(0,0,0,0.45)', backdropFilter:'blur(2px)', animation:'dcfade .2s'}}),
+      h('div',{style:{position:'relative', width:Math.min(this.state.vw-24, 460), height:'100%', background:'var(--panel)', borderLeft:'1px solid var(--border2)', boxShadow:'-20px 0 50px rgba(0,0,0,0.3)', overflowY:'auto', animation:'dcfade .25s ease'}},
+        body
+      )
+    );
+  }
+  drawerHead(ctx, kicker, title, close){ const h=ctx.h; return h('div',{style:{padding:'18px 20px', borderBottom:'1px solid var(--border)', position:'sticky', top:0, background:'var(--panel)', zIndex:2}},
+    h('div',{style:{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}},
+      h('span',{style:{fontSize:11, textTransform:'uppercase', letterSpacing:0.7, color:'var(--faint)', fontWeight:600, fontFamily:"'IBM Plex Mono',monospace"}}, kicker),
+      h('button',{onClick:close, style:{cursor:'pointer', width:30,height:30, borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)', color:'var(--muted)', display:'grid', placeItems:'center'}}, h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2.2},h('path',{d:'M6 6l12 12M18 6L6 18'})))
+    ),
+    h('div',{style:{fontSize:16, fontWeight:600, lineHeight:1.35}}, title)
+  ); }
+  metaRow(ctx, items){ const h=ctx.h; return h('div',{style:{display:'flex', flexWrap:'wrap', gap:'6px 18px', padding:'14px 20px', borderBottom:'1px solid var(--border)'}}, items.map(([k,v,c],i)=> h('div',{key:i}, h('div',{style:{fontSize:10.5, color:'var(--faint)', textTransform:'uppercase', letterSpacing:0.4, fontWeight:600}}, k), h('div',{style:{fontSize:13, fontWeight:500, marginTop:2, color:c||'var(--text)', fontFamily: k==='Age'||k==='When'?"'IBM Plex Mono',monospace":'inherit'}}, v)))); }
+  linkHeader(ctx, txt){ const h=ctx.h; return h('div',{style:{padding:'16px 20px 8px', fontSize:11, textTransform:'uppercase', letterSpacing:0.6, color:'var(--faint)', fontWeight:600, display:'flex', alignItems:'center', gap:7}}, h('svg',{width:13,height:13,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8'})), txt); }
+
+  artifactDrawer(ctx, a){ const h=ctx.h; const close=()=>this.set({drawer:null});
+    return h('div',null,
+      this.drawerHead(ctx, a.tracker+' · '+a.ref, a.title, close),
+      this.metaRow(ctx, [['Status',a.status,'var(--accent)'],['Assignee',a.assignee],['Opened',a.opened],['Age',a.age+' d']]),
+      this.linkHeader(ctx, a.commits.length+' linked commits'),
+      h('div',{style:{padding:'0 12px 20px', display:'flex', flexDirection:'column', gap:2}},
+        a.commits.map(cid=>{ const c=this.COMMITS[cid]; return h('a',{key:cid, href:'#', onClick:(e)=>{e.preventDefault(); this.set({drawer:{type:'commit', id:cid}});}, style:{display:'flex', gap:12, padding:'11px 12px', borderRadius:10, textDecoration:'none', color:'var(--text)'}, onMouseEnter:e=>e.currentTarget.style.background='var(--hover)', onMouseLeave:e=>e.currentTarget.style.background='transparent'},
+          h('span',{style:{fontFamily:"'IBM Plex Mono',monospace", fontSize:12, color:'var(--accent)', fontWeight:500, flexShrink:0}}, c.sha),
+          h('div',{style:{flex:1, minWidth:0}},
+            h('div',{style:{fontSize:13, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}, c.msg),
+            h('div',{style:{fontSize:11.5, color:'var(--faint)', marginTop:2, fontFamily:"'IBM Plex Mono',monospace"}}, c.repo+' · '+c.author+' · '+c.when)
+          ),
+          h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'var(--faint)',strokeWidth:2, style:{flexShrink:0, marginTop:2}},h('path',{d:'M7 17L17 7M9 7h8v8'}))
+        ); })
+      )
+    );
+  }
+  commitDrawer(ctx, c, cid){ const h=ctx.h; const close=()=>this.set({drawer:null}); const arts=c.artifacts.map(id=>this.ARTIFACTS.find(a=>a.id===id)).filter(Boolean);
+    return h('div',null,
+      this.drawerHead(ctx, 'commit · '+c.repo, c.msg, close),
+      this.metaRow(ctx, [['SHA',c.sha,'var(--accent)'],['Author',c.author],['When',c.when],['Repo',c.repo]]),
+      this.linkHeader(ctx, arts.length+' linked artifacts'),
+      h('div',{style:{padding:'0 12px 20px', display:'flex', flexDirection:'column', gap:2}},
+        arts.map(a=> h('a',{key:a.id, href:'#', onClick:(e)=>{e.preventDefault(); this.set({drawer:{type:'artifact', id:a.id}});}, style:{display:'flex', gap:12, padding:'11px 12px', borderRadius:10, textDecoration:'none', color:'var(--text)'}, onMouseEnter:e=>e.currentTarget.style.background='var(--hover)', onMouseLeave:e=>e.currentTarget.style.background='transparent'},
+          h('span',{style:{fontFamily:"'IBM Plex Mono',monospace", fontSize:12, color:'var(--accent)', fontWeight:500, flexShrink:0}}, a.ref),
+          h('div',{style:{flex:1, minWidth:0}},
+            h('div',{style:{fontSize:13, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}, a.title),
+            h('div',{style:{fontSize:11.5, color:'var(--faint)', marginTop:2}}, a.tracker+' · '+a.status)
+          ),
+          h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'var(--faint)',strokeWidth:2, style:{flexShrink:0, marginTop:2}},h('path',{d:'M7 17L17 7M9 7h8v8'}))
+        ))
+      )
+    );
+  }
+
+  // ---------- tooltip ----------
+  showTip(e, content){ this.setState({tooltip:{x:e.clientX, y:e.clientY, ...content}}); }
+  hideTip(){ if(this.state.tooltip) this.setState({tooltip:null}); }
+  tooltipEl(ctx){ const t=this.state.tooltip; if(!t) return null; const h=ctx.h;
+    const flipX = t.x > this.state.vw-190; const flipY = t.y > window.innerHeight-140;
+    return h('div',{style:{position:'fixed', left:t.x+(flipX?-14:14), top:t.y+(flipY?-14:14), transform:`translate(${flipX?'-100%':'0'}, ${flipY?'-100%':'0'})`, zIndex:80, pointerEvents:'none', background:'var(--surface)', border:'1px solid var(--border2)', borderRadius:10, boxShadow:'var(--shadow)', padding:'9px 11px', minWidth:130, animation:'dcfade .1s'}},
+      h('div',{style:{display:'flex', alignItems:'center', gap:7, marginBottom:t.rows.length?7:0, paddingBottom:t.rows.length?7:0, borderBottom:t.rows.length?'1px solid var(--border)':'none'}},
+        t.accent? h('span',{style:{width:8,height:8,borderRadius:2,background:t.accent,flexShrink:0}}):null,
+        h('span',{style:{fontSize:12, fontWeight:600, fontFamily:"'IBM Plex Mono',monospace", wordBreak:'break-all'}}, t.title)
+      ),
+      (t.rows||[]).map((r,i)=> h('div',{key:i, style:{display:'flex', justifyContent:'space-between', gap:18, fontSize:11.5, padding:'1.5px 0'}},
+        h('span',{style:{color:'var(--muted)'}}, r[0]), h('span',{style:{fontWeight:600, fontFamily:"'IBM Plex Mono',monospace"}}, r[1])
+      ))
+    );
+  }
+}
+</script>
+</body>
+</html>

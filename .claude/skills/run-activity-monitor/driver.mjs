@@ -48,18 +48,18 @@ try {
   await page.goto(WEB, { waitUntil: "networkidle", timeout: 30000 });
 
   // Git activity page: treemap panel must render an SVG with data
-  await page.waitForSelector(".tabs button", { timeout: 10000 });
+  await page.waitForSelector(".tabs .tab", { timeout: 10000 });
   await page.waitForSelector(".panel svg", { timeout: 15000 });
   await page.screenshot({ path: path.join(outDir, "git-activity.png"), fullPage: true });
   ok("git activity page rendered -> web/.smoke/git-activity.png");
 
   // interact: switch metric to churn
-  await page.click(".metric-toggle button:has-text('churn')");
+  await page.click(".panel .seg button:has-text('Churn')");
   await page.waitForLoadState("networkidle");
   ok("metric toggle -> churn");
 
   // interact: switch to Trackers tab
-  await page.click(".tabs button:has-text('Trackers')");
+  await page.click(".tabs .tab:has-text('Trackers')");
   await page.waitForSelector(".panel svg", { timeout: 15000 });
   await page.waitForLoadState("networkidle");
   await page.screenshot({ path: path.join(outDir, "trackers.png"), fullPage: true });

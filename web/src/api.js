@@ -27,9 +27,21 @@ export const api = {
   tree: (p) => get("/activity/tree", p),
   contributors: (p) => get("/activity/contributors", p),
   timeseries: (p) => get("/activity/timeseries", p),
+  mix: (p) => get("/activity/mix", p),
+  punchcard: (p) => get("/activity/punchcard", p),
+  codefrequency: (p) => get("/activity/codefrequency", p),
+  topfiles: (p) => get("/activity/topfiles", p),
   backlog: (p) => get("/tickets/backlog", p),
   throughput: (p) => get("/tickets/throughput", p),
   cycletime: (p) => get("/tickets/cycletime", p),
+  openTickets: (p) => get("/tickets/open", p),
+  recentArtifacts: (p) => get("/tickets/recent", p),
+  openByZone: (p) => get("/tickets/open_by_zone", p),
   ticketCommits: (id) => get(`/tickets/${id}/commits`),
-  commitTickets: (sha) => get(`/commits/${sha}/tickets`),
+  commitTickets: (sha) => get(`/commits/${encodeURIComponent(sha)}/tickets`),
 };
+
+// Serialize zones for query params (server classifies files itself).
+export function zonesParam(zones) {
+  return JSON.stringify((zones || []).map((z) => ({ name: z.name, dirs: z.dirs })));
+}
