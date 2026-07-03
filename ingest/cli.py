@@ -8,7 +8,8 @@ Subcommands:
   link-commits     cross-reference commit subjects to artifacts
   refresh-views    refresh materialized rollups
   ingest-all       ingest-git + ingest-trackers + link-commits + refresh-views
-                   (use --seed-sample to load the offline demo dataset instead)
+                   --seed-demo    load the large realistic offline demo dataset
+                   --seed-sample  load the small offline sample dataset
 
 Run `python -m ingest.cli <subcommand> --help` for options.
 """
@@ -18,7 +19,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import crossref, git_lane, sample_data, tuleap_lane
+from . import crossref, demo_data, git_lane, sample_data, tuleap_lane
 from .config import AppConfig, load_config
 from .db import connect
 
@@ -93,7 +94,12 @@ def cmd_refresh_views(cfg: AppConfig, args) -> None:
 
 
 def cmd_ingest_all(cfg: AppConfig, args) -> None:
-    if args.seed_sample:
+    if args.seed_demo:
+        conn = connect(cfg.database_url)
+        counts = demo_data.load_demo(conn, scale=args.scale)
+        conn.close()
+        print(f"Seeded rich demo data (scale={args.scale}): {counts}")
+    elif args.seed_sample:
         conn = connect(cfg.database_url)
         counts = sample_data.load_sample(conn)
         conn.close()
@@ -121,7 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     all_p = sub.add_parser("ingest-all", help="run every lane + refresh views")
     all_p.add_argument("--seed-sample", action="store_true",
-                       help="load the offline synthetic dataset instead of hitting real sources")
+                       help="load the small offline synthetic dataset instead of hitting real sources")
+    all_p.add_argument("--seed-demo", action="store_true",
+                       help="load the large, realistic offline demo dataset (6 repos, ~2.4k commits, "
+                            "3 trackers, hundreds of artifacts)")
+    all_p.add_argument("--scale", type=float, default=1.0,
+                       help="multiplier on demo volume (with --seed-demo); e.g. 2.0 doubles it")
     all_p.set_defaults(func=cmd_ingest_all)
 
     return p
@@ -129,8 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> None:
     args = build_parser().parse_args(argv)
-    if not hasattr(args, "seed_sample"):
-        args.seed_sample = False
+    for attr, default in (("seed_sample", False), ("seed_demo", False), ("scale", 1.0)):
+        if not hasattr(args, attr):
+            setattr(args, attr, default)
     cfg = load_config(args.config)
     args.func(cfg, args)
 

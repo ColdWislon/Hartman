@@ -25,7 +25,8 @@ It ingests git history and Tuleap ticket history into Postgres, then exposes:
 
 ## Quick start (offline demo)
 
-No live Tuleap needed — seeds a synthetic dataset:
+No live Tuleap or git backend needed. `make demo` builds and starts `db`,
+`api`, `web`, then loads a **large, realistic** synthetic dataset:
 
 ```bash
 make demo
@@ -33,8 +34,21 @@ make demo
 # API    : http://localhost:8000/api/repos
 ```
 
-`make demo` builds and starts `db`, `api`, `web`, then runs
-`ingest ingest-all --seed-sample`.
+The rich demo dataset (`ingest-all --seed-demo`) contains:
+
+- **6 repositories** with deep, plausible file trees (C firmware, a TS/React
+  frontend, a Python service, docs) — hot files that change often, and
+  vendored/lock paths excluded from churn.
+- **~2,400 commits** over ~18 months, biased to weekdays and business hours,
+  by **8 contributors** with different activity levels.
+- **3 trackers** with *distinct* status semantics (Bugs / Tasks / User
+  Stories) and **~270 artifacts** with realistic lifecycles (open → close,
+  some reopened, some still open), distributed per assignee.
+- Cross-reference links from ~35% of commits to artifacts.
+
+It is deterministic (seeded PRNG), so re-running stays idempotent. Scale it
+up with `make ingest-demo SCALE=2` (or `--scale`). For a tiny, fast dataset
+instead, use `make demo-quick` (`--seed-sample`: 2 repos, ~120 commits).
 
 ## Real ingestion
 

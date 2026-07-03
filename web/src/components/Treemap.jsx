@@ -102,7 +102,7 @@ function TreeTooltip({ active, payload, metric }) {
     <div className="panel" style={{ padding: "8px 10px" }}>
       <div><strong>{d.isLeaf ? d.name : d.name + "/"}</strong></div>
       <div>{metric}: {d.value}</div>
-      <div>commits: {d.commits}</div>
+      {metric !== "commits" && <div>commits: {d.commits}</div>}
       {!d.isLeaf && <div className="sub">click to drill in</div>}
     </div>
   );
