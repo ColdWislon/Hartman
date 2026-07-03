@@ -9,6 +9,7 @@ venv/
 node_modules/
 web/dist/
 .vite/
+web/.smoke/
 
 # Mirror clones created by the git lane at runtime
 mirrors/
